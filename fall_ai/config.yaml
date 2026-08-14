@@ -1,0 +1,31 @@
+name: "Fall AI"
+version: "0.1.0"
+slug: "fall_ai"
+description: "CPU-efficient YOLO pose fall detection for Home Assistant OS"
+url: "https://github.com/YOUR_GITHUB_USER/ha-fall-ai-addon"
+arch:
+  - amd64
+startup: services
+init: false
+services:
+  - mqtt:need
+map:
+  - type: addon_config
+    read_only: false
+    path: /config
+  - type: media
+    read_only: false
+    path: /media
+ports:
+  8099/tcp: null
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:human-falling
+panel_title: Fall AI
+options:
+  log_level: info
+  config_file: config.yaml
+schema:
+  log_level: list(trace|debug|info|warning|error)
+  config_file: str
+stage: experimental
