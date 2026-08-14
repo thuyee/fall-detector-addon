@@ -1,1 +1,23 @@
-ARG BUILD_FROM\nFROM ${BUILD_FROM}\n\nENV PYTHONUNBUFFERED=1\nWORKDIR /app\n\nRUN apk add --no-cache ffmpeg libstdc++ libgcc git\n\nCOPY requirements.txt /tmp/requirements.txt\nRUN pip3 install --no-cache-dir -r /tmp/requirements.txt\n\nCOPY app/main.py /app/main.py\nCOPY run.sh /run.sh\nRUN chmod +x /run.sh\n\n# Download YOLO11n-pose and export to ONNX Opset 21 during image build.\nRUN python3 - <<'PY'\nfrom ultralytics import YOLO\nfrom pathlib import Path\nmodel=YOLO("yolo11n-pose.pt")\nout=model.export(format="onnx", opset=21, imgsz=416, simplify=False, dynamic=False)\nPath("/config/models").mkdir(parents=True, exist_ok=True)\nPath(out).replace("/config/models/yolo11n-pose.onnx")\nPY\n\nCMD ["/run.sh"]\n
+ARG BUILD_FROM
+FROM ${BUILD_FROM}
+
+ENV PYTHONUNBUFFERED=1
+WORKDIR /app
+
+RUN apk add --no-cache ffmpeg libstdc++ libgcc
+
+COPY requirements.txt /tmp/requirements.txt
+RUN pip3 install --no-cache-dir -r /tmp/requirements.txt
+
+# Export the model during the IMAGE BUILD, not at runtime.
+# Opset 21 is explicitly requested because ORT 1.22 rejects Opset 22.
+RUN mkdir -p /opt/models && \
+    python3 -c "from ultralytics import YOLO; YOLO('yolo11n-pose.pt').export(format='onnx', opset=21, imgsz=416, simplify=False, dynamic=False)" && \
+    cp /app/yolo11n-pose.onnx /opt/models/yolo11n-pose.onnx && \
+    rm -f /app/yolo11n-pose.onnx
+
+COPY app/main.py /app/main.py
+COPY run.sh /run.sh
+RUN chmod +x /run.sh
+
+CMD ["/run.sh"]

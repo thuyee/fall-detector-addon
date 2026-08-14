@@ -1,8 +1,17 @@
 #!/bin/sh
 set -eu
 
-CONFIG="${CONFIG_FILE:-/config/config.yaml}"
+CONFIG="/config/config.yaml"
+MODEL_SRC="/opt/models/yolo11n-pose.onnx"
+MODEL_DST="/config/models/yolo11n-pose.onnx"
+
 mkdir -p /config/models
+
+# Always replace the runtime model with the bundled Opset-21 model.
+# This also removes an old Opset-22 model left by v0.1.1.
+if [ -f "$MODEL_SRC" ]; then
+  cp -f "$MODEL_SRC" "$MODEL_DST"
+fi
 
 if [ ! -f "$CONFIG" ]; then
   cat > "$CONFIG" <<'EOF'
@@ -23,7 +32,7 @@ global:
   track_timeout_seconds: 1.5
   mqtt_prefix: fall_ai
 EOF
-  echo "[Fall AI] Created $CONFIG. Add cameras, save, then restart."
+  echo "[Fall AI] Created /config/config.yaml. Add cameras, save, then restart."
 fi
 
 exec python3 /app/main.py --config "$CONFIG"
