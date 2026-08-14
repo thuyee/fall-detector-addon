@@ -7,15 +7,24 @@ MODEL_DST="/config/models/yolo11n-pose.onnx"
 
 mkdir -p /config/models
 
-# Always replace the runtime model with the bundled Opset-21 model.
-# This also removes an old Opset-22 model left by v0.1.1.
-if [ -f "$MODEL_SRC" ]; then
-  cp -f "$MODEL_SRC" "$MODEL_DST"
-fi
+# Always replace any old runtime model, including an Opset-22 model.
+cp -f "$MODEL_SRC" "$MODEL_DST"
 
 if [ ! -f "$CONFIG" ]; then
   cat > "$CONFIG" <<'EOF'
-cameras: []
+cameras:
+  - id: phong_khach
+    name: "Phòng khách"
+    rtsp: "rtsp://admin:YOUR_PASSWORD@192.168.0.107:554"
+    motion_entity: "binary_sensor.c6n_e17394610_motion"
+    enabled: true
+
+  - id: san
+    name: "Sân"
+    rtsp: "rtsp://admin:YOUR_PASSWORD@192.168.0.122:554"
+    motion_entity: "binary_sensor.h6c_bf2378127_motion"
+    enabled: true
+
 global:
   inference_fps: 3
   alert_fps: 5
@@ -32,7 +41,7 @@ global:
   track_timeout_seconds: 1.5
   mqtt_prefix: fall_ai
 EOF
-  echo "[Fall AI] Created /config/config.yaml. Add cameras, save, then restart."
+  echo "[Fall AI] Created /config/config.yaml. Add the RTSP passwords, save, then restart."
 fi
 
 exec python3 /app/main.py --config "$CONFIG"

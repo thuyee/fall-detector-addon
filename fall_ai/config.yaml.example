@@ -1,33 +1,26 @@
-# Fall AI configuration v0.1.2
-
 cameras:
-
   - id: phong_khach
-    name: "C6N Phòng Khách"
-    rtsp: "rtsp://admin:YOUR_PASSWORD@192.168.0.107:554/ch1/main"
-    enabled: true
+    name: "Phòng khách"
+    rtsp: "rtsp://admin:YOUR_PASSWORD@192.168.0.107:554"
     motion_entity: "binary_sensor.c6n_e17394610_motion"
+    enabled: true
 
   - id: san
-    name: "H6C Sân"
-    rtsp: "rtsp://admin:YOUR_PASSWORD@192.168.0.122:554/ch1/main"
-    enabled: true
+    name: "Sân"
+    rtsp: "rtsp://admin:YOUR_PASSWORD@192.168.0.122:554"
     motion_entity: "binary_sensor.h6c_bf2378127_motion"
+    enabled: true
 
 global:
   inference_fps: 3
   alert_fps: 5
   image_size: 416
   person_confidence: 0.45
-
-  # Image motion fallback. HA motion_entity is preferred.
   motion_threshold: 8.0
   motion_pixels: 250
-
   confirmation_seconds: 8
   cooldown_seconds: 60
   fall_score_threshold: 0.72
-
   cpu_threads: 2
   snapshot_on_event: true
   max_people: 2

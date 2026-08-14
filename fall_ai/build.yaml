@@ -1,4 +1,4 @@
-build_from:
-  amd64: ghcr.io/home-assistant/amd64-base-python:3.12
+# Kept only for compatibility with older Supervisor/build tooling.
+# Modern Supervisor builds use the FROM statement in Dockerfile.
 args:
-  BUILD_VERSION: "0.1.2"
+  BUILD_VERSION: "0.1.4"
