@@ -1,1 +1,33 @@
+name: Fall AI
+version: "0.1.1"
+slug: fall_ai
+description: CPU-efficient YOLO pose fall detection for Home Assistant OS.
+url: https://github.com/YOUR_GITHUB_USER/ha-fall-ai-addon
+arch:
+  - amd64
+
+startup: application
+init: false
+homeassistant_api: true
+
+map:
+  - type: addon_config
+    read_only: false
+  - type: media
+    read_only: false
+
+options:
+  log_level: info
+  config_file: fall_config.yaml
+
+schema:
+  log_level: list(trace|debug|info|warning|error)
+  config_file: str
+
+ports:
+  8099/tcp: 8099
+ports_description:
+  8099/tcp: Fall AI status/API
+
+webui: http://[HOST]:[PORT:8099]
 
