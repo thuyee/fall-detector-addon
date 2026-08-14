@@ -1,0 +1,18 @@
+name: Fall AI
+version: "0.1.2"
+slug: fall_ai
+description: CPU-efficient YOLO pose fall detection with Home Assistant motion gating
+arch:
+  - amd64
+startup: application
+boot: auto
+init: false
+map:
+  - addon_config:rw
+options:
+  log_level: info
+  config_file: /config/config.yaml
+schema:
+  log_level: list(debug|info|warning|error)
+  config_file: str
+image: "ghcr.io/REPLACE_ME/fall-ai"

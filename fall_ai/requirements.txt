@@ -1,0 +1,7 @@
+numpy<2
+opencv-python-headless
+onnxruntime==1.22.0
+PyYAML
+paho-mqtt
+requests
+ultralytics
