@@ -41,6 +41,15 @@ def main():
     www_subdir = notif_cfg.get("www_subdir", "fall_ai")
     snapshot_dir = os.path.join(HA_CONFIG_ROOT, "www", www_subdir)
 
+    # Must be set before any cv2.VideoCapture(...) call (i.e. before any
+    # CameraWorker starts). RTSP over UDP commonly drops packets on WiFi
+    # cameras, which corrupts H.264/H.265 decoding (visible as "Could not
+    # find ref with POC" and read()/grab() failures) even though the
+    # connection itself succeeds. TCP is slower to start but far more
+    # reliable for this use case.
+    rtsp_transport = g.get("rtsp_transport", "tcp")
+    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = f"rtsp_transport;{rtsp_transport}"
+
     LOG.info("Fall AI starting")
     LOG.info("Configured cameras: %d", len(cfg["cameras"]))
     LOG.info(
@@ -49,6 +58,7 @@ def main():
         g.get("inference_fps", 3),
         g.get("image_size", 416),
     )
+    LOG.info("RTSP transport: %s", rtsp_transport)
 
     ha = HAClient()
 

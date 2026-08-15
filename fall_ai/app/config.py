@@ -32,6 +32,7 @@ DEFAULT_GLOBAL = {
     "track_timeout_seconds": 2.0,
     "track_iou_threshold": 0.25,
     "track_center_threshold": 0.20,
+    "rtsp_transport": "tcp",
 }
 
 DEFAULT_NOTIFICATIONS = {
