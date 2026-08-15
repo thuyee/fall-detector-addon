@@ -24,15 +24,15 @@ global:
   fall_score_threshold: 0.72
   stable_lie_threshold: 0.68
   stable_lie_angle: 42.0
-  history_seconds: 3.0
-  transition_window_seconds: 1.8
+  history_seconds: 5.0
+  transition_window_seconds: 4.0
   prefall_upright_score: 0.55
   prefall_upright_angle: 55.0
   fall_lie_angle: 38.0
-  fall_min_angle_drop: 28.0
-  fall_min_angular_velocity: 18.0
-  fall_min_hip_drop: 0.045
-  fall_min_aspect_gain: 0.35
+  fall_min_angle_drop: 20.0
+  fall_min_angular_velocity: 8.0
+  fall_min_hip_drop: 0.035
+  fall_min_aspect_gain: 0.25
   cpu_threads: 2
   snapshot_on_event: true
   snapshot_retention_days: 7

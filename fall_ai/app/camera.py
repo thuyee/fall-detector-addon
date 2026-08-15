@@ -133,10 +133,10 @@ class CameraWorker(threading.Thread):
         angle = feat["angle"]
         threshold = float(self.g.get("fall_score_threshold", 0.72))
         min_lie_angle = float(self.g.get("fall_lie_angle", 38.0))
-        min_angle_drop = float(self.g.get("fall_min_angle_drop", 28.0))
-        min_angular_velocity = float(self.g.get("fall_min_angular_velocity", 18.0))
-        min_hip_drop = float(self.g.get("fall_min_hip_drop", 0.045))
-        min_aspect_gain = float(self.g.get("fall_min_aspect_gain", 0.35))
+        min_angle_drop = float(self.g.get("fall_min_angle_drop", 20.0))
+        min_angular_velocity = float(self.g.get("fall_min_angular_velocity", 8.0))
+        min_hip_drop = float(self.g.get("fall_min_hip_drop", 0.035))
+        min_aspect_gain = float(self.g.get("fall_min_aspect_gain", 0.25))
 
         ref = self._recent_reference(history, now, float(self.g.get("transition_window_seconds", 1.8)))
         if ref is None:
@@ -186,13 +186,39 @@ class CameraWorker(threading.Thread):
             + 0.12 * aspect_score
         )
 
-        passed = (
+        # Normal/fast path keeps the stricter score and two-cue requirement.
+        fast_pass = (
             upright_seen
             and current >= threshold
             and angle <= min_lie_angle
             and angle_drop >= min_angle_drop
             and cues >= 2
         )
+
+        # Slow-fall path: a gradual fall can have low angular velocity and a
+        # lower instantaneous lying score even though the person clearly
+        # transitioned from upright to the floor.  Allow the transition to
+        # start with a lower posture score, but still require a meaningful
+        # angle change plus at least one independent body-geometry cue. The
+        # existing stable-lie confirmation in process_people() remains at
+        # stable_lie_threshold/stable_lie_angle for 2.5s, so this does not
+        # immediately alert on a single low-confidence lying frame.
+        slow_posture_threshold = max(0.60, threshold - 0.10)
+        slow_angle_limit = max(min_lie_angle, float(self.g.get("stable_lie_angle", 42.0)))
+        slow_geometry_cue = (
+            hip_drop >= min_hip_drop
+            or aspect_gain >= min_aspect_gain
+            or angle_drop >= (min_angle_drop + 8.0)
+        )
+        slow_pass = (
+            upright_seen
+            and current >= slow_posture_threshold
+            and angle <= slow_angle_limit
+            and angle_drop >= min_angle_drop
+            and slow_geometry_cue
+        )
+
+        passed = fast_pass or slow_pass
         details = {
             "angle": angle,
             "angle_drop": angle_drop,
@@ -202,6 +228,7 @@ class CameraWorker(threading.Thread):
             "lying_score": current,
             "cues": cues,
             "upright_seen": upright_seen,
+            "mode": "fast" if fast_pass else ("slow" if slow_pass else "none"),
         }
         return passed, transition_score, details
 
@@ -230,8 +257,8 @@ class CameraWorker(threading.Thread):
             if transition:
                 self.fall_candidate_since.setdefault(tid, now)
                 LOG.info(
-                    "%s: fall transition track=%s score=%.2f angle=%.1f drop=%.1f vel=%.1f hip=%.3f cues=%d",
-                    cid, tid, transition_score, details["angle"], details["angle_drop"],
+                    "%s: fall transition track=%s mode=%s score=%.2f angle=%.1f drop=%.1f vel=%.1f hip=%.3f cues=%d",
+                    cid, tid, details.get("mode", "?"), transition_score, details["angle"], details["angle_drop"],
                     details["angular_velocity"], details["hip_drop"], details["cues"],
                 )
 

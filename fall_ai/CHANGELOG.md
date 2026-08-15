@@ -1,3 +1,9 @@
+## 0.4.2
+- Added a slow-fall transition path for gradual stand-to-floor movements.
+- Extended pose history/transition window so slow falls can accumulate evidence over several seconds.
+- Relaxed angular velocity, angle-drop, hip-drop and aspect-ratio cues for gradual falls.
+- Slow-fall candidates still require the existing stable lying confirmation before an alert is sent.
+
 # Changelog
 
 ## 0.4.0
