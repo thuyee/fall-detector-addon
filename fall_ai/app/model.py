@@ -1,4 +1,4 @@
-"""YOLO11n-pose ONNX model wrapper and fall-scoring heuristic."""
+"""YOLO11n-pose ONNX model wrapper and interpretable fall features."""
 import logging
 import math
 import os
@@ -74,7 +74,6 @@ def decode_pose(output, image_size, conf_threshold, max_people):
         x, y, w, h = map(float, row[:4])
         k = np.asarray(row[5:56], dtype=np.float32).reshape(17, 3)
 
-        # Coordinates are in the exported model's input (letterboxed) space.
         k[:, 0] = np.clip(k[:, 0] / image_size, 0, 1)
         k[:, 1] = np.clip(k[:, 1] / image_size, 0, 1)
 
@@ -90,52 +89,95 @@ def decode_pose(output, image_size, conf_threshold, max_people):
     return people[:max_people]
 
 
-def pose_fall_score(person):
-    """
-    Heuristic score in [0, 1]:
-      - horizontal bounding box (wide vs tall)
-      - torso approaching horizontal (shoulder-hip line angle)
-      - shoulders/hips/ankles spread horizontally
-      - sufficient visible keypoints
+def _midpoint(k, good, a, b):
+    if good[a] and good[b]:
+        return (k[a, :2] + k[b, :2]) / 2.0
+    if good[a]:
+        return k[a, :2].copy()
+    if good[b]:
+        return k[b, :2].copy()
+    return None
 
-    Deliberately conservative; combined with temporal confirmation logic
-    in CameraWorker before an alert is fired.
+
+def pose_features(person):
+    """Return geometry used by the temporal fall detector.
+
+    Angles are measured from the horizontal: 90° is upright, 0° is lying.
+    Coordinates are normalized to the camera frame, so the features remain
+    useful when the camera resolution changes.
     """
     k = person["keypoints"]
     vis = k[:, 2]
     good = vis > 0.35
-    if int(np.count_nonzero(good)) < 6:
-        return 0.0
+    visible = int(np.count_nonzero(good))
+    if visible < 6:
+        return {"valid": False, "quality": 0.0}
 
-    # COCO keypoints: 5/6 shoulders, 11/12 hips, 15/16 ankles.
-    def mid(a, b):
-        if good[a] and good[b]:
-            return (k[a, :2] + k[b, :2]) / 2.0
-        return None
-
-    shoulder = mid(5, 6)
-    hip = mid(11, 12)
+    shoulder = _midpoint(k, good, 5, 6)
+    hip = _midpoint(k, good, 11, 12)
+    nose = k[0, :2].copy() if good[0] else None
+    ankles = []
+    for idx in (15, 16):
+        if good[idx]:
+            ankles.append(k[idx, :2])
 
     _, _, bw, bh = person["bbox"]
     aspect = bw / max(0.01, bh)
-    aspect_score = np.clip((aspect - 1.05) / 1.5, 0, 1)
 
-    torso_score = 0.0
+    angle = 45.0
     if shoulder is not None and hip is not None:
         dx = float(hip[0] - shoulder[0])
         dy = float(hip[1] - shoulder[1])
-        angle_from_horizontal = abs(math.degrees(math.atan2(dy, dx)))
-        angle_from_horizontal = min(angle_from_horizontal, 180 - angle_from_horizontal)
-        torso_score = np.clip(1.0 - angle_from_horizontal / 75.0, 0, 1)
+        a = abs(math.degrees(math.atan2(dy, dx)))
+        angle = min(a, 180.0 - a)
 
     visible_x = k[good, 0]
     visible_y = k[good, 1]
     pose_w = float(np.max(visible_x) - np.min(visible_x))
     pose_h = float(np.max(visible_y) - np.min(visible_y))
-    spread_score = np.clip((pose_w / max(0.02, pose_h) - 1.1) / 2.0, 0, 1)
+    spread_ratio = pose_w / max(0.02, pose_h)
 
-    return float(
+    aspect_score = float(np.clip((aspect - 1.05) / 1.5, 0, 1))
+    torso_score = float(np.clip(1.0 - angle / 75.0, 0, 1))
+    spread_score = float(np.clip((spread_ratio - 1.1) / 2.0, 0, 1))
+
+    # Current posture score: useful as the end-state of a fall, but not by
+    # itself sufficient to call a fall. This intentionally avoids alerting
+    # on somebody who was already lying down.
+    lying_score = (
         0.40 * aspect_score
         + 0.35 * torso_score
         + 0.25 * spread_score
     )
+
+    upright_score = float(
+        0.65 * np.clip((angle - 45.0) / 45.0, 0, 1)
+        + 0.35 * np.clip((1.10 - aspect) / 1.0, 0, 1)
+    )
+
+    # Hip is a much better body-centre proxy than the bbox centre for a fall.
+    center_y = float(hip[1]) if hip is not None else float(np.mean(visible_y))
+    head_y = float(nose[1]) if nose is not None else (
+        float(shoulder[1]) if shoulder is not None else center_y
+    )
+    foot_y = float(np.mean([p[1] for p in ankles])) if ankles else None
+
+    return {
+        "valid": True,
+        "quality": min(1.0, visible / 12.0),
+        "angle": float(angle),
+        "aspect": float(aspect),
+        "spread_ratio": float(spread_ratio),
+        "lying_score": float(np.clip(lying_score, 0, 1)),
+        "upright_score": float(np.clip(upright_score, 0, 1)),
+        "center_y": center_y,
+        "head_y": head_y,
+        "foot_y": foot_y,
+        "bbox_h": float(bh),
+        "bbox_w": float(bw),
+    }
+
+
+def pose_fall_score(person):
+    """Backward-compatible single-frame posture score in [0, 1]."""
+    return float(pose_features(person).get("lying_score", 0.0))

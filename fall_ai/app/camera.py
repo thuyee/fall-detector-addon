@@ -4,12 +4,13 @@ temporal fall confirmation, snapshot + notification dispatch.
 import logging
 import threading
 import time
+from collections import deque
 from pathlib import Path
 
 import cv2
 import numpy as np
 
-from model import decode_pose, pose_fall_score
+from model import decode_pose, pose_features
 from tracker import Tracker
 
 LOG = logging.getLogger("fall_ai.camera")
@@ -73,12 +74,16 @@ class CameraWorker(threading.Thread):
         self.last_alert = 0.0
 
         self.tracker = Tracker(
-            timeout=float(g.get("track_timeout_seconds", 1.5)),
-            iou_threshold=float(g.get("track_iou_threshold", 0.3)),
+            timeout=float(g.get("track_timeout_seconds", 2.0)),
+            iou_threshold=float(g.get("track_iou_threshold", 0.25)),
+            center_threshold=float(g.get("track_center_threshold", 0.20)),
         )
-        # Per track_id temporal state.
-        self.last_scores = {}
+        # Per-track temporal state. A short skeleton history is much more
+        # informative than a single "lying" frame: a real fall normally has
+        # standing -> rapid rotation -> low/lying posture.
+        self.track_history = {}
         self.fall_candidate_since = {}
+        self.last_debug_log = {}
 
     # -- motion gating -----------------------------------------------
     def _motion_gate_cheap(self):
@@ -94,37 +99,157 @@ class CameraWorker(threading.Thread):
         return None
 
     # -- fall confirmation --------------------------------------------
+    def _state_for(self, tid):
+        maxlen = max(8, int(float(self.g.get("history_seconds", 3.0)) *
+                            float(self.g.get("inference_fps", 3)) + 3))
+        state = self.track_history.get(tid)
+        if state is None:
+            state = {"history": deque(maxlen=maxlen)}
+            self.track_history[tid] = state
+        elif state["history"].maxlen != maxlen:
+            state["history"] = deque(state["history"], maxlen=maxlen)
+        return state
+
+    @staticmethod
+    def _recent_reference(history, now, seconds):
+        ref = None
+        cutoff = now - seconds
+        for item in history:
+            if item["t"] >= cutoff and item["t"] < now:
+                ref = item
+        return ref
+
+    def _fall_transition(self, history, feat, now):
+        """Detect the transition into a fall using short-term geometry.
+
+        The detector deliberately requires a pre-fall upright state. This
+        prevents a person who was already lying down from generating an
+        alert merely because motion restarted.
+        """
+        if not feat.get("valid"):
+            return False, 0.0, {}
+
+        current = feat["lying_score"]
+        angle = feat["angle"]
+        threshold = float(self.g.get("fall_score_threshold", 0.72))
+        min_lie_angle = float(self.g.get("fall_lie_angle", 38.0))
+        min_angle_drop = float(self.g.get("fall_min_angle_drop", 28.0))
+        min_angular_velocity = float(self.g.get("fall_min_angular_velocity", 18.0))
+        min_hip_drop = float(self.g.get("fall_min_hip_drop", 0.045))
+        min_aspect_gain = float(self.g.get("fall_min_aspect_gain", 0.35))
+
+        ref = self._recent_reference(history, now, float(self.g.get("transition_window_seconds", 1.8)))
+        if ref is None:
+            return False, 0.0, {}
+
+        # Find the most upright recent pose; it is a stronger baseline than
+        # simply comparing with the immediately preceding frame.
+        upright_ref = max(
+            (x for x in history if x["t"] >= now - float(self.g.get("transition_window_seconds", 1.8))
+             and x["t"] < now),
+            key=lambda x: x["f"]["upright_score"],
+            default=ref,
+        )
+
+        dt = max(0.05, now - upright_ref["t"])
+        angle_drop = max(0.0, upright_ref["f"]["angle"] - angle)
+        angular_velocity = angle_drop / dt
+        hip_drop = max(0.0, feat["center_y"] - upright_ref["f"]["center_y"])
+        aspect_gain = feat["aspect"] - upright_ref["f"]["aspect"]
+
+        upright_seen = upright_ref["f"]["upright_score"] >= float(
+            self.g.get("prefall_upright_score", 0.55)
+        ) or upright_ref["f"]["angle"] >= float(self.g.get("prefall_upright_angle", 55.0))
+
+        # Two independent dynamic cues are required in addition to the final
+        # lying posture. This is the key false-positive reduction.
+        cues = 0
+        if angle_drop >= min_angle_drop:
+            cues += 1
+        if angular_velocity >= min_angular_velocity:
+            cues += 1
+        if hip_drop >= min_hip_drop:
+            cues += 1
+        if aspect_gain >= min_aspect_gain:
+            cues += 1
+
+        angle_score = np.clip(angle_drop / 55.0, 0, 1)
+        velocity_score = np.clip(angular_velocity / 55.0, 0, 1)
+        hip_score = np.clip(hip_drop / 0.14, 0, 1)
+        aspect_score = np.clip(aspect_gain / 1.0, 0, 1)
+
+        transition_score = float(
+            0.30 * current
+            + 0.25 * angle_score
+            + 0.18 * velocity_score
+            + 0.15 * hip_score
+            + 0.12 * aspect_score
+        )
+
+        passed = (
+            upright_seen
+            and current >= threshold
+            and angle <= min_lie_angle
+            and angle_drop >= min_angle_drop
+            and cues >= 2
+        )
+        details = {
+            "angle": angle,
+            "angle_drop": angle_drop,
+            "angular_velocity": angular_velocity,
+            "hip_drop": hip_drop,
+            "aspect_gain": aspect_gain,
+            "lying_score": current,
+            "cues": cues,
+            "upright_seen": upright_seen,
+        }
+        return passed, transition_score, details
+
     def process_people(self, people):
         now = time.monotonic()
         threshold = float(self.g.get("fall_score_threshold", 0.72))
-        confirm = float(self.g.get("confirmation_seconds", 8))
+        confirm = float(self.g.get("confirmation_seconds", 2.5))
+        stable_lie_threshold = float(self.g.get("stable_lie_threshold", 0.68))
+        stable_angle = float(self.g.get("stable_lie_angle", 42.0))
         cid = self.cam.get("id", "camera")
 
         track_ids = self.tracker.update(people, now)
         active_ids = set(track_ids)
 
         for person, tid in zip(people, track_ids):
-            score = pose_fall_score(person)
-            prev = self.last_scores.get(tid, 0.0)
+            feat = pose_features(person)
+            if not feat.get("valid"):
+                continue
 
-            # A strong jump toward horizontal is treated as the fall transition.
-            transition = score >= threshold and (prev < threshold or score - prev > 0.20)
+            state = self._state_for(tid)
+            history = state["history"]
+            history.append({"t": now, "f": feat})
 
-            if score < threshold:
-                self.fall_candidate_since.pop(tid, None)
-            elif transition or tid in self.fall_candidate_since:
+            transition, transition_score, details = self._fall_transition(history, feat, now)
+
+            if transition:
                 self.fall_candidate_since.setdefault(tid, now)
+                LOG.info(
+                    "%s: fall transition track=%s score=%.2f angle=%.1f drop=%.1f vel=%.1f hip=%.3f cues=%d",
+                    cid, tid, transition_score, details["angle"], details["angle_drop"],
+                    details["angular_velocity"], details["hip_drop"], details["cues"],
+                )
 
-                if now - self.fall_candidate_since[tid] >= confirm:
-                    self.confirm_fall(score)
+            candidate_since = self.fall_candidate_since.get(tid)
+            if candidate_since is not None:
+                # The person must remain in a lying posture for a short
+                # period. This rejects quick crouches/sits and transient pose
+                # noise after a frame is lost.
+                lying_now = feat["lying_score"] >= stable_lie_threshold and feat["angle"] <= stable_angle
+                if not lying_now:
+                    self.fall_candidate_since.pop(tid, None)
+                elif now - candidate_since >= confirm:
+                    self.confirm_fall(max(feat["lying_score"], transition_score))
                     self.fall_candidate_since.pop(tid, None)
 
-            self.last_scores[tid] = score
-
-        # Drop temporal state for tracks that are no longer active.
-        for stale in list(self.last_scores.keys()):
+        for stale in list(self.track_history.keys()):
             if stale not in active_ids:
-                self.last_scores.pop(stale, None)
+                self.track_history.pop(stale, None)
                 self.fall_candidate_since.pop(stale, None)
 
     # -- alert dispatch --------------------------------------------------
