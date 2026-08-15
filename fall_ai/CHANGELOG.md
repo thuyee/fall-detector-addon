@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.1
+- **Fixed a reconnect-loop bug** introduced by the 0.2.0 `cap.grab()` CPU
+  optimization: right after opening an RTSP connection (especially for
+  H.265/HEVC streams), the very first `grab()` can transiently fail before
+  the decoder has a reference frame yet — the addon was treating a single
+  failed grab as a dead connection and reconnecting forever, so the camera
+  never actually settled into a working state.
+  - Now does one real `read()` immediately after connecting to prime the
+    decoder before ever calling grab()-only mode.
+  - A failed `grab()` no longer triggers an immediate reconnect; it only
+    reconnects after ~30 consecutive failures (a few seconds), tolerating
+    the normal decoder warm-up.
+
 ## 0.3.0
 - **Fixed Zalo integration to match your actual `zalo_bot` custom
   integration.** Previous 0.2.0 assumed a generic `notify.*` service for
