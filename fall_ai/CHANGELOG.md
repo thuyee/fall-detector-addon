@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0
+- Reworked fall detection around temporal pose transitions instead of single-frame lying posture.
+- Added torso-angle change, angular velocity, hip/center-of-mass drop, bbox aspect-ratio change and stable lying confirmation.
+- Added short per-person pose history keyed by tracker ID.
+- Improved tracker matching with IoU + normalized center distance to preserve identity through a stand-to-floor transition.
+- Kept HA motion gating, MQTT, snapshots and Zalo/mobile notifications compatible with v0.3.1.
+
+
 ## 0.3.1
 - **Fixed a reconnect-loop bug** introduced by the 0.2.0 `cap.grab()` CPU
   optimization: right after opening an RTSP connection (especially for
