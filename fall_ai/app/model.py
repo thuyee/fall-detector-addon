@@ -156,6 +156,7 @@ def pose_features(person):
     )
 
     # Hip is a much better body-centre proxy than the bbox centre for a fall.
+    center_x = float(hip[0]) if hip is not None else float(np.mean(visible_x))
     center_y = float(hip[1]) if hip is not None else float(np.mean(visible_y))
     head_y = float(nose[1]) if nose is not None else (
         float(shoulder[1]) if shoulder is not None else center_y
@@ -170,6 +171,7 @@ def pose_features(person):
         "spread_ratio": float(spread_ratio),
         "lying_score": float(np.clip(lying_score, 0, 1)),
         "upright_score": float(np.clip(upright_score, 0, 1)),
+        "center_x": center_x,
         "center_y": center_y,
         "head_y": head_y,
         "foot_y": foot_y,

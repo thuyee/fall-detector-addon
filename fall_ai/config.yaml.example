@@ -33,6 +33,12 @@ global:
   fall_min_angular_velocity: 8.0
   fall_min_hip_drop: 0.035
   fall_min_aspect_gain: 0.25
+  slow_fall_transition_seconds: 6.0
+  slow_fall_angle: 45.0
+  slow_fall_posture_threshold: 0.45
+  slow_fall_upright_angle: 55.0
+  slow_fall_stationary_seconds: 2.2
+  slow_fall_stationary_movement: 0.055
   cpu_threads: 2
   snapshot_on_event: true
   snapshot_retention_days: 7

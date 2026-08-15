@@ -1,3 +1,10 @@
+## 0.4.3
+- Added a dedicated slow-fall streak path inspired by the supplied V12.5 SmartSense detector.
+- Slow falls no longer depend on high angular velocity or a large instantaneous angle drop.
+- Slow-fall detection uses an upright-to-torso-angle transition around 45 degrees plus a stationary confirmation window.
+- Extended the slow transition lookback to 6 seconds while retaining the existing final stable-lying confirmation.
+- Added configurable slow-fall parameters for tuning false positives/false negatives.
+
 ## 0.4.2
 - Added a slow-fall transition path for gradual stand-to-floor movements.
 - Extended pose history/transition window so slow falls can accumulate evidence over several seconds.

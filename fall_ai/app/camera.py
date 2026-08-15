@@ -137,18 +137,27 @@ class CameraWorker(threading.Thread):
         min_angular_velocity = float(self.g.get("fall_min_angular_velocity", 8.0))
         min_hip_drop = float(self.g.get("fall_min_hip_drop", 0.035))
         min_aspect_gain = float(self.g.get("fall_min_aspect_gain", 0.25))
+        transition_window = float(self.g.get("transition_window_seconds", 4.0))
+        slow_window = float(self.g.get("slow_fall_transition_seconds", 6.0))
 
-        ref = self._recent_reference(history, now, float(self.g.get("transition_window_seconds", 1.8)))
+        ref = self._recent_reference(history, now, transition_window)
         if ref is None:
             return False, 0.0, {}
 
-        # Find the most upright recent pose; it is a stronger baseline than
-        # simply comparing with the immediately preceding frame.
+        # Fast path baseline uses the shorter transition window. The slow path
+        # below can look further back because a gradual stand-to-floor movement
+        # may take several seconds.
         upright_ref = max(
-            (x for x in history if x["t"] >= now - float(self.g.get("transition_window_seconds", 1.8))
+            (x for x in history if x["t"] >= now - transition_window
              and x["t"] < now),
             key=lambda x: x["f"]["upright_score"],
             default=ref,
+        )
+        slow_upright_ref = max(
+            (x for x in history if x["t"] >= now - slow_window
+             and x["t"] < now),
+            key=lambda x: (x["f"]["upright_score"], x["f"]["angle"]),
+            default=upright_ref,
         )
 
         dt = max(0.05, now - upright_ref["t"])
@@ -195,26 +204,52 @@ class CameraWorker(threading.Thread):
             and cues >= 2
         )
 
-        # Slow-fall path: a gradual fall can have low angular velocity and a
-        # lower instantaneous lying score even though the person clearly
-        # transitioned from upright to the floor.  Allow the transition to
-        # start with a lower posture score, but still require a meaningful
-        # angle change plus at least one independent body-geometry cue. The
-        # existing stable-lie confirmation in process_people() remains at
-        # stable_lie_threshold/stable_lie_angle for 2.5s, so this does not
-        # immediately alert on a single low-confidence lying frame.
-        slow_posture_threshold = max(0.60, threshold - 0.10)
-        slow_angle_limit = max(min_lie_angle, float(self.g.get("stable_lie_angle", 42.0)))
+        # Slow-fall path: mirror the proven fall-streak idea used by the
+        # reference detector: once a person who was upright reaches a torso
+        # angle around 45 degrees, keep the candidate alive while the person
+        # remains nearly stationary. Do NOT require a high angular velocity or
+        # a large instantaneous angle drop; those are precisely what gradual
+        # falls can miss. The final stable-lie confirmation in process_people()
+        # still has to hold for confirmation_seconds before an alert is sent.
+        slow_posture_threshold = float(self.g.get("slow_fall_posture_threshold", 0.45))
+        slow_angle_limit = float(self.g.get("slow_fall_angle", 45.0))
+        slow_upright_angle = float(self.g.get("slow_fall_upright_angle", 55.0))
+        slow_stationary_seconds = float(self.g.get("slow_fall_stationary_seconds", 2.2))
+        slow_stationary_movement = float(self.g.get("slow_fall_stationary_movement", 0.055))
+
+        slow_cutoff = now - slow_stationary_seconds
+        slow_recent = [x for x in history if x["t"] >= slow_cutoff and x["t"] <= now]
+        slow_movement = 0.0
+        if len(slow_recent) >= 2:
+            slow_movement = sum(
+                float(np.hypot(
+                    b["f"].get("center_x", 0.0) - a["f"].get("center_x", 0.0),
+                    b["f"].get("center_y", 0.0) - a["f"].get("center_y", 0.0),
+                ))
+                for a, b in zip(slow_recent, slow_recent[1:])
+            )
+
+        slow_upright_seen = (
+            slow_upright_ref["f"]["upright_score"] >= float(self.g.get("prefall_upright_score", 0.55))
+            or slow_upright_ref["f"]["angle"] >= slow_upright_angle
+        )
+        slow_angle_drop = max(0.0, slow_upright_ref["f"]["angle"] - angle)
         slow_geometry_cue = (
             hip_drop >= min_hip_drop
             or aspect_gain >= min_aspect_gain
-            or angle_drop >= (min_angle_drop + 8.0)
+            or slow_angle_drop >= 10.0
         )
+
+        # Do not require the person to be stationary BEFORE creating the
+        # candidate. The reference detector starts its fall streak as soon as
+        # the torso crosses ~45 degrees, then confirms that the person remains
+        # still. Here that confirmation is represented by the existing
+        # stable-lie window in process_people().
         slow_pass = (
-            upright_seen
+            slow_upright_seen
             and current >= slow_posture_threshold
             and angle <= slow_angle_limit
-            and angle_drop >= min_angle_drop
+            and slow_angle_drop >= 10.0
             and slow_geometry_cue
         )
 
@@ -228,6 +263,8 @@ class CameraWorker(threading.Thread):
             "lying_score": current,
             "cues": cues,
             "upright_seen": upright_seen,
+            "slow_angle_drop": slow_angle_drop,
+            "slow_movement": slow_movement,
             "mode": "fast" if fast_pass else ("slow" if slow_pass else "none"),
         }
         return passed, transition_score, details
