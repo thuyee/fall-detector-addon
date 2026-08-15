@@ -187,6 +187,12 @@ class CameraWorker(threading.Thread):
 
         interval = 1.0 / max(0.1, float(self.g.get("inference_fps", 3)))
         cap = None
+        consecutive_grab_failures = 0
+        # HEVC/H.264 decoders need a few packets (SPS/PPS/keyframe) before
+        # grab() can succeed. Right after connecting, a handful of failed
+        # grabs is normal, not a dead connection — only reconnect once
+        # failures persist well beyond that warm-up window.
+        GRAB_FAIL_LIMIT = 30  # ~3s of retries at the 0.1s sleep below
 
         while not self.stop_event.is_set():
             if cap is None or not cap.isOpened():
@@ -201,18 +207,38 @@ class CameraWorker(threading.Thread):
                     time.sleep(5)
                     continue
                 LOG.info("%s: RTSP connected", cid)
+                consecutive_grab_failures = 0
+
+                # Prime the decoder with one real read so grab()-only mode
+                # (used below when motion is off) has a reference frame to
+                # work from; a bare grab() right after opening can fail
+                # transiently before any frame has been decoded yet.
+                ok, frame = cap.read()
+                if ok:
+                    self.last_frame = frame
+                else:
+                    LOG.warning("%s: initial frame read failed, will retry", cid)
+                continue
 
             gate = self._motion_gate_cheap()
 
             if gate is False:
                 # Motion entity says nothing is happening: drain the RTSP
-                # buffer without paying the JPEG/H264 decode cost.
+                # buffer without paying the JPEG/H264/H265 decode cost.
                 ok = cap.grab()
                 if not ok:
-                    LOG.warning("%s: RTSP grab failed; reconnecting", cid)
-                    cap.release()
-                    cap = None
-                    time.sleep(2)
+                    consecutive_grab_failures += 1
+                    if consecutive_grab_failures >= GRAB_FAIL_LIMIT:
+                        LOG.warning(
+                            "%s: RTSP grab failed %d times in a row; reconnecting",
+                            cid, consecutive_grab_failures,
+                        )
+                        cap.release()
+                        cap = None
+                        consecutive_grab_failures = 0
+                        time.sleep(2)
+                else:
+                    consecutive_grab_failures = 0
                 time.sleep(0.05)
                 continue
 
@@ -224,6 +250,7 @@ class CameraWorker(threading.Thread):
                 time.sleep(2)
                 continue
 
+            consecutive_grab_failures = 0
             self.last_frame = frame
 
             if gate is None:
