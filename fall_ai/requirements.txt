@@ -1,7 +1,0 @@
-numpy<2
-opencv-python-headless
-onnxruntime==1.22.0
-PyYAML
-requests
-ultralytics
-onnx
