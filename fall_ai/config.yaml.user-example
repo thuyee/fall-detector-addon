@@ -1,0 +1,20 @@
+# Copy this structure to the persistent /config/config.yaml.
+# IMPORTANT: replace YOUR_PASSWORD with the real camera password.
+#
+# Phòng khách:
+#   RTSP host: 192.168.0.107
+#   Motion: binary_sensor.c6n_e17394610_motion
+#
+# Sân:
+#   RTSP host: 192.168.0.122
+#   Motion: binary_sensor.h6c_bf2378127_motion
+#
+# Notifications:
+#   - notifications.mobile.services: list the notify.* service(s) shown under
+#     Settings -> Devices & services -> Mobile App on the phone(s) you want alerted.
+#   - notifications.zalo.service: the notify.* service exposed by your Zalo
+#     bot integration/add-on (e.g. notify.zalo_bot). Set zalo.enabled: true
+#     once that service name is confirmed.
+#   - notifications.base_url: leave empty to auto-detect from Home
+#     Assistant's internal_url. Set explicitly (e.g. "http://192.168.0.50:8099")
+#     if auto-detection picks the wrong host or you're on a different subnet.

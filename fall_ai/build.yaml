@@ -1,0 +1,4 @@
+# Kept only for compatibility with older Supervisor/build tooling.
+# Modern Supervisor builds use the FROM statement in Dockerfile.
+args:
+  BUILD_VERSION: "0.1.4"
