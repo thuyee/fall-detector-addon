@@ -83,6 +83,7 @@ class CameraWorker(threading.Thread):
         # standing -> rapid rotation -> low/lying posture.
         self.track_history = {}
         self.fall_candidate_since = {}
+        self.fall_candidate_samples = {}
         self.last_debug_log = {}
 
     # -- motion gating -----------------------------------------------
@@ -293,6 +294,7 @@ class CameraWorker(threading.Thread):
 
             if transition:
                 self.fall_candidate_since.setdefault(tid, now)
+                self.fall_candidate_samples.setdefault(tid, deque(maxlen=32))
                 LOG.info(
                     "%s: fall transition track=%s mode=%s score=%.2f angle=%.1f drop=%.1f vel=%.1f hip=%.3f cues=%d",
                     cid, tid, details.get("mode", "?"), transition_score, details["angle"], details["angle_drop"],
@@ -301,20 +303,47 @@ class CameraWorker(threading.Thread):
 
             candidate_since = self.fall_candidate_since.get(tid)
             if candidate_since is not None:
-                # The person must remain in a lying posture for a short
-                # period. This rejects quick crouches/sits and transient pose
-                # noise after a frame is lost.
-                lying_now = feat["lying_score"] >= stable_lie_threshold and feat["angle"] <= stable_angle
-                if not lying_now:
-                    self.fall_candidate_since.pop(tid, None)
-                elif now - candidate_since >= confirm:
-                    self.confirm_fall(max(feat["lying_score"], transition_score))
-                    self.fall_candidate_since.pop(tid, None)
+                # Do not cancel the candidate because of one noisy YOLO pose
+                # frame. At 3 FPS, a single bad keypoint frame is common.
+                # Keep a short confirmation history and require the majority
+                # of observations in the confirmation window to be lying,
+                # while the final observation must still be lying.
+                lying_now = (
+                    feat["lying_score"] >= stable_lie_threshold
+                    and feat["angle"] <= stable_angle
+                )
+                samples = self.fall_candidate_samples.setdefault(tid, deque(maxlen=32))
+                samples.append((now, lying_now, float(feat["lying_score"]), float(feat["angle"]), float(transition_score)))
+
+                elapsed = now - candidate_since
+                window_samples = [x for x in samples if x[0] >= candidate_since and x[0] <= now]
+
+                if elapsed >= confirm:
+                    min_samples = max(4, int(round(confirm * float(self.g.get("inference_fps", 3)) * 0.55)))
+                    lying_count = sum(1 for x in window_samples if x[1])
+                    lying_ratio = lying_count / max(1, len(window_samples))
+                    final_lying = lying_now
+
+                    if len(window_samples) >= min_samples and final_lying and lying_ratio >= 0.60:
+                        best_score = max(
+                            [x[2] for x in window_samples if x[1]] + [transition_score]
+                        )
+                        self.confirm_fall(best_score)
+                        self.fall_candidate_since.pop(tid, None)
+                        self.fall_candidate_samples.pop(tid, None)
+                    else:
+                        LOG.info(
+                            "%s: fall candidate rejected track=%s samples=%d lying=%d ratio=%.2f final=%s",
+                            cid, tid, len(window_samples), lying_count, lying_ratio, final_lying,
+                        )
+                        self.fall_candidate_since.pop(tid, None)
+                        self.fall_candidate_samples.pop(tid, None)
 
         for stale in list(self.track_history.keys()):
             if stale not in active_ids:
                 self.track_history.pop(stale, None)
                 self.fall_candidate_since.pop(stale, None)
+                self.fall_candidate_samples.pop(stale, None)
 
     # -- alert dispatch --------------------------------------------------
     def confirm_fall(self, score):
