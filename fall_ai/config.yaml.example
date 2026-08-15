@@ -30,15 +30,20 @@ global:
 notifications:
   enabled: true
   message: "⚠️ Phát hiện té ngã tại {camera_name} lúc {time}"
-  base_url: ""
-  snapshot_port: 8099
+  www_subdir: "fall_ai"
   mobile:
     enabled: true
     services:
       - notify.mobile_app_dien_thoai_cua_a
+    base_url: ""
   zalo:
     enabled: false
-    service: notify.zalo_bot
+    thread_id: ""
+    account_selection: ""
+    msg_type: "1"
+    ttl: 0
+    send_text: true
+    send_image: true
 
 mqtt:
   enabled: false

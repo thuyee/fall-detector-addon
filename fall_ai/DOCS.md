@@ -36,45 +36,81 @@ This is an experimental computer-vision detector; tune the thresholds for
 the actual camera angle and environment. **It is not a medical or
 life-safety system.**
 
-## Notifications (mobile app + Zalo)
+## Notifications (mobile app + Zalo) — required setup
 
-When a fall is confirmed, the addon (no automation required):
+When a fall is confirmed, the addon (no automation required) saves a
+snapshot and calls Home Assistant services directly to alert your phone
+and/or Zalo.
 
-1. Saves a snapshot JPEG from the camera's last frame.
-2. Serves it over its own small HTTP server on port `8099`
-   (`notifications.snapshot_port`).
-3. Calls the Home Assistant `notify.*` service(s) you list under
-   `notifications.mobile.services`, with the snapshot attached as `data.image`.
-4. If `notifications.zalo.enabled: true`, calls the `notify.*` service you
-   name under `notifications.zalo.service` the same way (it sends both an
-   `image` and `photo` key in the payload data, to cover either convention).
-5. Also fires an HA event `fall_ai_event` for anyone who wants to build their
-   own automation in addition to / instead of the built-in notifications.
+### 1. Mount Home Assistant's real config folder
 
-### Finding your notify service names
+The addon's own persistent storage (`/config` inside the addon, mapped via
+`addon_config:rw`) is **isolated** from Home Assistant Core's actual config
+directory — it is not the same `/config` your automations and `www/` folder
+live in. To publish images that HA Core (and the `zalo_bot` integration,
+which runs inside HA Core) can read, this addon's manifest adds:
 
-**Mobile app:** Settings → Devices & services → Mobile App → your device →
-the service is `notify.mobile_app_<device_name>`.
+```yaml
+map:
+  - addon_config:rw
+  - homeassistant_config:rw
+```
 
-**Zalo:** whatever `notify.*` service name your Zalo integration/add-on
-exposes in Home Assistant (check Developer Tools → Actions, search "zalo").
+This mounts your real HA config directory into the addon read/write.
+**This grants the addon access to your entire HA config, including
+`secrets.yaml`.** It's the standard technique many add-ons use to publish
+files under `www/`, but you should be aware of the scope before enabling
+it. If you'd rather not grant this, set `notifications.enabled: false` and
+build your own automation off the `fall_ai_event` event instead (see below).
 
-### Image URL auto-detection
+Snapshots are written to `<your HA config>/www/fall_ai/<file>.jpg`, which
+Home Assistant serves at `http://<your-ha>:8123/local/fall_ai/<file>.jpg`.
 
-The snapshot server listens on the addon's own port `8099`. To build a URL
-your phone (or the Zalo bot) can fetch, the addon takes the hostname from
-Home Assistant's `internal_url` (Settings → System → Network) and appends
-`:8099`. If that's wrong for your network (e.g. reverse proxy, VLANs), set
-`notifications.base_url` explicitly, e.g.:
+### 2. Mobile app push notifications
+
+List the `notify.*` service name(s) for the phone(s) you want alerted:
 
 ```yaml
 notifications:
-  base_url: "http://192.168.0.50:8099"
+  mobile:
+    enabled: true
+    services:
+      - notify.mobile_app_dien_thoai_cua_a
 ```
 
-> Note: alerts sent while your phone is away from home need that URL to be
-> reachable from outside your LAN (port-forward, VPN, or a reverse proxy to
-> port 8099). On the local network it works out of the box.
+Find the exact name at Settings → Devices & services → Mobile App → your
+device. The snapshot is attached via `data.image: "/local/fall_ai/<file>.jpg"`,
+a path the companion app resolves against your configured HA server URL —
+no manual host/IP configuration needed.
+
+### 3. Zalo (via the zalo_bot integration)
+
+This calls `zalo_bot.send_message` and `zalo_bot.send_image` directly —
+the same actions your own automations already use — with:
+
+```yaml
+notifications:
+  zalo:
+    enabled: true
+    thread_id: "1058896116335801995"       # same as your existing automations
+    account_selection: "+84868837123"      # same as your existing automations
+    msg_type: "1"
+    ttl: 0
+    send_text: true     # sends the alert message via zalo_bot.send_message
+    send_image: true     # sends the snapshot via zalo_bot.send_image
+```
+
+`image_path` sent to `zalo_bot.send_image` is
+`/config/www/fall_ai/<file>.jpg` — this is HA Core's own view of the file
+(not the addon's), which is why step 1 (mounting `homeassistant_config:rw`)
+is required for this to work.
+
+### If you don't want to grant homeassistant_config:rw
+
+Set `notifications.enabled: false`. The addon still fires an HA event
+`fall_ai_event` (with `camera_id`, `camera_name`, `score`, `snapshot`,
+`timestamp`) on every confirmed fall — you can build your own automation
+around that event and your own snapshot delivery method instead.
 
 ## Optional: MQTT integration
 
@@ -87,5 +123,6 @@ explicitly.
 
 ## Snapshot retention
 
-Snapshots older than `global.snapshot_retention_days` (default 7) are deleted
-automatically once an hour, so `/config/snapshots` doesn't grow unbounded.
+Snapshots older than `global.snapshot_retention_days` (default 7) are
+deleted automatically once an hour, so `www/fall_ai/` doesn't grow
+unbounded.

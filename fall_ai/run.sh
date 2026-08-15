@@ -6,7 +6,6 @@ MODEL_SRC="/opt/models/yolo11n-pose.onnx"
 MODEL_DST="/config/models/yolo11n-pose.onnx"
 
 mkdir -p /config/models
-mkdir -p /config/snapshots
 
 # Always replace any old runtime model, including an older/incompatible opset.
 cp -f "$MODEL_SRC" "$MODEL_DST"
@@ -45,15 +44,20 @@ global:
 notifications:
   enabled: true
   message: "⚠️ Phát hiện té ngã tại {camera_name} lúc {time}"
-  base_url: ""
-  snapshot_port: 8099
+  www_subdir: "fall_ai"
   mobile:
     enabled: true
     services:
       - notify.mobile_app_dien_thoai_cua_a
+    base_url: ""
   zalo:
     enabled: false
-    service: notify.zalo_bot
+    thread_id: ""
+    account_selection: ""
+    msg_type: "1"
+    ttl: 0
+    send_text: true
+    send_image: true
 
 mqtt:
   enabled: false
@@ -61,6 +65,12 @@ mqtt:
   discovery_prefix: homeassistant
 YAML
   echo "[Fall AI] Created /config/config.yaml. Edit RTSP passwords and notification targets, save, then restart."
+fi
+
+if [ ! -d /homeassistant ]; then
+  echo "[Fall AI] WARNING: /homeassistant is not mounted. Add 'homeassistant_config:rw'"
+  echo "[Fall AI] to this addon's map: in config.yaml (Settings > Add-ons > Fall AI > Info)"
+  echo "[Fall AI] so mobile/Zalo image notifications can reach your HA www/ folder."
 fi
 
 exec python3 /app/main.py --config "$CONFIG"
