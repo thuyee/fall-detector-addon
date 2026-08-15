@@ -172,7 +172,7 @@ class CameraWorker(threading.Thread):
             try:
                 url = None
                 if snapshot_filename and self.notifier:
-                    url = self.notifier.image_url(snapshot_filename)
+                    url = self.notifier.local_url(snapshot_filename)
                 self.mqtt_pub.publish_fall(cid, url)
             except Exception:
                 LOG.exception("%s: mqtt publish failed", cid)

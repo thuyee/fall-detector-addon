@@ -25,10 +25,21 @@ DEFAULT_GLOBAL = {
 DEFAULT_NOTIFICATIONS = {
     "enabled": True,
     "message": "\u26a0\ufe0f Ph\u00e1t hi\u1ec7n t\u00e9 ng\u00e3 t\u1ea1i {camera_name} l\u00fac {time}",
-    "base_url": "",
-    "snapshot_port": 8099,
-    "mobile": {"enabled": True, "services": []},
-    "zalo": {"enabled": False, "service": ""},
+    "www_subdir": "fall_ai",
+    "mobile": {
+        "enabled": True,
+        "services": [],
+        "base_url": "",  # optional full URL override; default uses relative /local/... path
+    },
+    "zalo": {
+        "enabled": False,
+        "thread_id": "",
+        "account_selection": "",
+        "msg_type": "1",
+        "ttl": 0,
+        "send_text": True,
+        "send_image": True,
+    },
 }
 
 DEFAULT_MQTT = {

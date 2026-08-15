@@ -12,11 +12,15 @@ from ha_client import HAClient
 from model import PoseModel
 from mqtt_client import MqttPublisher
 from notify import Notifier
-from snapshot_server import SnapshotServer
 
 LOG = logging.getLogger("fall_ai")
 
-SNAPSHOT_DIR = "/config/snapshots"
+# Home Assistant's real config directory, mounted read/write via the
+# 'homeassistant_config:rw' map entry in config.yaml. Snapshots are written
+# under its www/ folder so both the HA frontend (/local/...) and the
+# zalo_bot integration (which runs inside HA Core and sees this same
+# folder as /config/www/...) can read them.
+HA_CONFIG_ROOT = "/homeassistant"
 
 
 def main():
@@ -34,6 +38,8 @@ def main():
     g = cfg["global"]
     notif_cfg = cfg["notifications"]
     mqtt_cfg = cfg["mqtt"]
+    www_subdir = notif_cfg.get("www_subdir", "fall_ai")
+    snapshot_dir = os.path.join(HA_CONFIG_ROOT, "www", www_subdir)
 
     LOG.info("Fall AI starting")
     LOG.info("Configured cameras: %d", len(cfg["cameras"]))
@@ -53,26 +59,34 @@ def main():
 
     model = PoseModel(g.get("image_size", 416), g.get("cpu_threads", 2))
 
-    notifier = Notifier(ha, notif_cfg) if notif_cfg.get("enabled", True) else None
-    if notifier:
+    notifier = None
+    if notif_cfg.get("enabled", True):
+        if not os.path.isdir(HA_CONFIG_ROOT):
+            LOG.error(
+                "%s is not mounted. Add 'homeassistant_config:rw' to this "
+                "addon's 'map:' in config.yaml and restart, otherwise "
+                "mobile/Zalo image notifications cannot find your Home "
+                "Assistant www/ folder.",
+                HA_CONFIG_ROOT,
+            )
+        try:
+            os.makedirs(snapshot_dir, exist_ok=True)
+        except Exception:
+            LOG.exception("Could not create snapshot folder %s", snapshot_dir)
+        notifier = Notifier(ha, notif_cfg, www_subdir=www_subdir)
         LOG.info(
-            "Notifications enabled: mobile=%s zalo=%s",
+            "Notifications enabled: mobile=%s zalo=%s -> %s",
             notif_cfg.get("mobile", {}).get("enabled", True),
             notif_cfg.get("zalo", {}).get("enabled", False),
+            snapshot_dir,
         )
-
-    snapshot_server = None
-    if notif_cfg.get("enabled", True):
-        os.makedirs(SNAPSHOT_DIR, exist_ok=True)
-        snapshot_server = SnapshotServer(SNAPSHOT_DIR, notif_cfg.get("snapshot_port", 8099))
-        snapshot_server.start()
 
     mqtt_pub = None
     if mqtt_cfg.get("enabled", False):
         mqtt_pub = MqttPublisher(mqtt_cfg, ha, cfg["cameras"])
         mqtt_pub.start()
 
-    cleaner = SnapshotCleaner(SNAPSHOT_DIR, g.get("snapshot_retention_days", 7))
+    cleaner = SnapshotCleaner(snapshot_dir, g.get("snapshot_retention_days", 7))
     cleaner.start()
 
     workers = []
@@ -81,7 +95,7 @@ def main():
             LOG.info("Camera %s disabled, skipping", cam.get("id"))
             continue
         worker = CameraWorker(cam, g, model, ha, notifier=notifier, mqtt_pub=mqtt_pub,
-                               snapshot_dir=SNAPSHOT_DIR)
+                               snapshot_dir=snapshot_dir)
         workers.append(worker)
         worker.start()
         LOG.info("Camera %s enabled; motion_entity=%s", cam.get("id"), cam.get("motion_entity"))
@@ -94,8 +108,6 @@ def main():
         for w in workers:
             w.stop()
         cleaner.stop()
-        if snapshot_server:
-            snapshot_server.stop()
         if mqtt_pub:
             mqtt_pub.stop()
 
