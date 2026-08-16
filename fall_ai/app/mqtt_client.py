@@ -1,3 +1,4 @@
+import time
 """Optional MQTT integration: publishes a per-camera 'fall detected'
 binary_sensor via Home Assistant MQTT discovery.
 
