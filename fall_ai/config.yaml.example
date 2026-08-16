@@ -22,6 +22,10 @@ global:
   confirmation_seconds: 1.8
   cooldown_seconds: 60
   fall_score_threshold: 0.72
+  # Score core for fast falls
+  fast_fall_score_threshold: 0.72
+  # Score core for slow falls (lower = more sensitive)
+  slow_fall_score_threshold: 0.30
   stable_lie_threshold: 0.45
   stable_lie_angle: 48.0
   history_seconds: 5.0

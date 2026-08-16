@@ -1,4 +1,4 @@
-# v0.4.9
+# v0.4.10
 
 - Mobile notification now defaults to `notify.notify` when no explicit service list is configured.
 - Snapshot is frozen and written immediately when FALL CONFIRMED is entered, before HA/Zalo calls.

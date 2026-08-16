@@ -136,7 +136,13 @@ class CameraWorker(threading.Thread):
 
         current = feat["lying_score"]
         angle = feat["angle"]
-        threshold = float(self.g.get("fall_score_threshold", 0.72))
+        # Independent score cores for fast and slow falls.
+        # Keep the legacy fall_score_threshold as a fallback for fast-fall.
+        fast_threshold = float(self.g.get(
+            "fast_fall_score_threshold",
+            self.g.get("fall_score_threshold", 0.72)
+        ))
+        slow_threshold = float(self.g.get("slow_fall_score_threshold", 0.30))
         min_lie_angle = float(self.g.get("fall_lie_angle", 38.0))
         min_angle_drop = float(self.g.get("fall_min_angle_drop", 20.0))
         min_angular_velocity = float(self.g.get("fall_min_angular_velocity", 8.0))
@@ -203,7 +209,8 @@ class CameraWorker(threading.Thread):
         # Normal/fast path keeps the stricter score and two-cue requirement.
         fast_pass = (
             upright_seen
-            and current >= threshold
+            and transition_score >= fast_threshold
+            and current >= fast_threshold
             and angle <= min_lie_angle
             and angle_drop >= min_angle_drop
             and cues >= 2
@@ -258,6 +265,7 @@ class CameraWorker(threading.Thread):
         # confirmation stage ever started.
         slow_pass = (
             slow_upright_seen
+            and transition_score >= slow_threshold
             and angle <= slow_angle_limit
             and slow_angle_drop >= 10.0
             and slow_geometry_cue
@@ -276,12 +284,13 @@ class CameraWorker(threading.Thread):
             "slow_angle_drop": slow_angle_drop,
             "slow_movement": slow_movement,
             "mode": "fast" if fast_pass else ("slow" if slow_pass else "none"),
+            "fast_threshold": fast_threshold,
+            "slow_threshold": slow_threshold,
         }
         return passed, transition_score, details
 
     def process_people(self, people):
         now = time.monotonic()
-        threshold = float(self.g.get("fall_score_threshold", 0.72))
         confirm = float(self.g.get("confirmation_seconds", 1.8))
         stable_lie_threshold = float(self.g.get("stable_lie_threshold", 0.45))
         stable_angle = float(self.g.get("stable_lie_angle", 48.0))

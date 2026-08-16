@@ -13,7 +13,11 @@ DEFAULT_GLOBAL = {
     "motion_pixels": 250,
     "confirmation_seconds": 1.8,
     "cooldown_seconds": 60,
+    # Fast and slow fall score cores are independently configurable.
+    # fall_score_threshold remains as a backward-compatible alias for fast.
     "fall_score_threshold": 0.72,
+    "fast_fall_score_threshold": 0.72,
+    "slow_fall_score_threshold": 0.30,
     "stable_lie_threshold": 0.45,
     "stable_lie_angle": 48.0,
     "history_seconds": 5.0,
