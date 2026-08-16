@@ -125,7 +125,8 @@ def pose_features(person):
     aspect = bw / max(0.01, bh)
 
     angle = 45.0
-    if shoulder is not None and hip is not None:
+    angle_valid = shoulder is not None and hip is not None
+    if angle_valid:
         dx = float(hip[0] - shoulder[0])
         dy = float(hip[1] - shoulder[1])
         a = abs(math.degrees(math.atan2(dy, dx)))
@@ -138,22 +139,42 @@ def pose_features(person):
     spread_ratio = pose_w / max(0.02, pose_h)
 
     aspect_score = float(np.clip((aspect - 1.05) / 1.5, 0, 1))
-    torso_score = float(np.clip(1.0 - angle / 75.0, 0, 1))
     spread_score = float(np.clip((spread_ratio - 1.1) / 2.0, 0, 1))
 
     # Current posture score: useful as the end-state of a fall, but not by
     # itself sufficient to call a fall. This intentionally avoids alerting
     # on somebody who was already lying down.
-    lying_score = (
-        0.40 * aspect_score
-        + 0.35 * torso_score
-        + 0.25 * spread_score
-    )
-
-    upright_score = float(
-        0.65 * np.clip((angle - 45.0) / 45.0, 0, 1)
-        + 0.35 * np.clip((1.10 - aspect) / 1.0, 0, 1)
-    )
+    #
+    # When shoulders/hips aren't both visible (occlusion, side-on framing,
+    # poor lighting), `angle` is a fixed 45.0 placeholder - NOT a real
+    # measurement. Feeding that into torso_score would silently poison
+    # lying_score/upright_score with a constant mid-value that looks like
+    # real data (this previously produced fake "angle_drop" deltas of
+    # ~44-45 degrees whenever a track flipped between having and not having
+    # visible shoulder/hip keypoints, with no real posture change at all).
+    # Drop the torso term entirely when angle isn't real, and renormalize
+    # the remaining weights so lying_score still sums sensibly.
+    if angle_valid:
+        torso_score = float(np.clip(1.0 - angle / 75.0, 0, 1))
+        lying_score = (
+            0.40 * aspect_score
+            + 0.35 * torso_score
+            + 0.25 * spread_score
+        )
+        upright_score = float(
+            0.65 * np.clip((angle - 45.0) / 45.0, 0, 1)
+            + 0.35 * np.clip((1.10 - aspect) / 1.0, 0, 1)
+        )
+    else:
+        torso_score = None
+        # Weights renormalized across aspect(0.40) + spread(0.25) = 0.65.
+        lying_score = (
+            (0.40 / 0.65) * aspect_score
+            + (0.25 / 0.65) * spread_score
+        )
+        # No angle signal at all for upright_score either; fall back to the
+        # aspect-only component, renormalized to full weight.
+        upright_score = float(np.clip((1.10 - aspect) / 1.0, 0, 1))
 
     # Hip is a much better body-centre proxy than the bbox centre for a fall.
     center_x = float(hip[0]) if hip is not None else float(np.mean(visible_x))
@@ -167,6 +188,7 @@ def pose_features(person):
         "valid": True,
         "quality": min(1.0, visible / 12.0),
         "angle": float(angle),
+        "angle_valid": bool(angle_valid),
         "aspect": float(aspect),
         "spread_ratio": float(spread_ratio),
         "lying_score": float(np.clip(lying_score, 0, 1)),

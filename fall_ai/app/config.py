@@ -29,6 +29,12 @@ DEFAULT_GLOBAL = {
     "fall_min_angular_velocity": 8.0,
     "fall_min_hip_drop": 0.035,
     "fall_min_aspect_gain": 0.25,
+    # Tolerate this many seconds of a single noisy/jittery non-lying frame
+    # before actually resetting the stable-lie / unknown-onset timers. Fixes
+    # a bug where one bad pose estimate (common on low-res/low-fps CPU
+    # inference) could silently reset an otherwise-real fall's confirmation
+    # progress back to zero every time, preventing it from ever confirming.
+    "lying_grace_seconds": 0.6,
     # Fast-fall cue-count requirement can be bypassed when the composite
     # score alone is already this confident (recall > precision).
     "fall_min_cues": 2,

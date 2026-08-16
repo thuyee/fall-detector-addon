@@ -1,3 +1,52 @@
+# v0.4.14
+
+- **Bugfix: `fall_candidate_bad_since` was dead code — one noisy frame could
+  silently reset an otherwise-real fall's confirmation progress to zero.**
+  The comment right above the reset line even said "do not cancel
+  immediately on one bad pose frame", but the code did exactly that:
+  `fall_stable_since` (the 1.8s confirmation timer) and `fall_unknown_since`
+  (the unknown-onset timer) were popped on the very first frame where the
+  pose estimate ticked a degree past the lying threshold — common on
+  low-res/low-fps CPU pose estimation. A real fall with a single jittery
+  frame in the middle would never accumulate enough continuous "lying" time
+  to confirm. Now tolerates up to `lying_grace_seconds` (default 0.6s) of
+  continuous bad frames before actually resetting either timer.
+
+# v0.4.14
+
+- **Fixed: fake `angle_drop` from occlusion-based `angle=45.0` fallback.**
+  `pose_features()` in `model.py` falls back to a fixed `angle = 45.0`
+  placeholder whenever a person's shoulder pair AND hip pair aren't both
+  visible (occlusion, side-on framing, poor lighting) - this is not a real
+  measurement. Previously this fallback silently poisoned every downstream
+  calculation that compared angles: `angle_drop`/`angular_velocity` could
+  report a large fabricated "rotation" purely because a track's keypoints
+  flipped between visible/occluded with zero real posture change (seen in
+  the field as `angle=45.0` frozen across many frames with `drop=44.x` on a
+  person who never fell), and the `stable_lie_threshold`/`unknown_onset`
+  angle checks (`angle <= X`) were trivially always true at exactly 45.0
+  regardless of real posture.
+  - `pose_features()` now returns `angle_valid: bool`. When false,
+    `lying_score`/`upright_score` are recomputed from aspect + keypoint
+    spread only (torso/angle term dropped and weights renormalized), so
+    they remain a genuine, if noisier, signal instead of embedding the
+    placeholder.
+  - Every `angle <= threshold` comparison in `camera.py`
+    (fast-fall final posture, slow-fall final posture, the stable-lie
+    check, and the unknown-onset check) now falls back to the
+    angle-independent `lying_score` when `angle_valid` is false, instead of
+    trivially evaluating against the placeholder.
+  - `angle_drop`/`angular_velocity`/`slow_angle_drop` are now `0.0` (no
+    signal) whenever either endpoint of the comparison has an invalid
+    angle, instead of a fabricated delta.
+  - To avoid losing recall from this stricter angle handling, the fast-fall
+    and slow-fall hard "did the torso move" requirements substitute the
+    hip-drop / aspect-gain cues when angle isn't available, so a genuine
+    fall that ends with the torso occluded (e.g. behind furniture) still
+    confirms - verified in testing to still confirm in ~3.6s for a fast
+    fall landing with the torso occluded, vs. never confirming before this
+    fix in that same scenario.
+
 # v0.4.13
 
 - Version bump only (packaging), no functional change from v0.4.12.

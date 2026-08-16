@@ -37,6 +37,9 @@ global:
   fall_min_angular_velocity: 8.0
   fall_min_hip_drop: 0.035
   fall_min_aspect_gain: 0.25
+  # Tolerate this many seconds of a single noisy pose frame before
+  # resetting the stable-lie / unknown-onset confirmation timers.
+  lying_grace_seconds: 0.6
   # Fast-fall cue count can be bypassed when the composite score alone is
   # already this confident (recall > precision: don't let one occluded
   # keypoint block an obvious fall).

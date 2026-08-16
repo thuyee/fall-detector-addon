@@ -101,6 +101,7 @@ class CameraWorker(threading.Thread):
         # indefinitely and never generate an alert, because
         # _fall_transition() requires seeing them upright first.
         self.fall_unknown_since = {}
+        self.fall_unknown_bad_since = {}
         self.last_debug_log = {}
 
     # -- motion gating -----------------------------------------------
@@ -185,14 +186,28 @@ class CameraWorker(threading.Thread):
         )
 
         dt = max(0.05, now - upright_ref["t"])
-        angle_drop = max(0.0, upright_ref["f"]["angle"] - angle)
+        upright_angle_valid = upright_ref["f"].get("angle_valid", True)
+        feat_angle_valid = feat.get("angle_valid", True)
+        # angle_drop is only meaningful if BOTH ends of the comparison are
+        # real measurements. If either the current frame or the reference
+        # frame fell back to the fixed 45.0 placeholder (shoulder/hip not
+        # both visible - occlusion, side-on framing, poor light), any delta
+        # computed from it is fabricated, not a real posture change. Treat
+        # it as "no signal" rather than let it masquerade as a large drop.
+        if feat_angle_valid and upright_angle_valid:
+            angle_drop = max(0.0, upright_ref["f"]["angle"] - angle)
+        else:
+            angle_drop = 0.0
         angular_velocity = angle_drop / dt
         hip_drop = max(0.0, feat["center_y"] - upright_ref["f"]["center_y"])
         aspect_gain = feat["aspect"] - upright_ref["f"]["aspect"]
 
         upright_seen = upright_ref["f"]["upright_score"] >= float(
             self.g.get("prefall_upright_score", 0.55)
-        ) or upright_ref["f"]["angle"] >= float(self.g.get("prefall_upright_angle", 55.0))
+        ) or (
+            upright_angle_valid
+            and upright_ref["f"]["angle"] >= float(self.g.get("prefall_upright_angle", 55.0))
+        )
 
         # Two independent dynamic cues are required in addition to the final
         # lying posture. This is the key false-positive reduction.
@@ -225,6 +240,26 @@ class CameraWorker(threading.Thread):
         # otherwise obvious fast fall. Recall > precision here.
         high_confidence_score = float(self.g.get("fall_high_confidence_score", 0.85))
 
+        # The primary "did the torso rotate a lot, fast" signal. When angle
+        # isn't a real measurement (occlusion), angle_drop is forced to 0
+        # above and can never satisfy this - substitute the two remaining
+        # independent cues (hip drop / aspect gain) so a real fast fall
+        # with an occluded shoulder-hip line doesn't get hard-blocked here.
+        if feat_angle_valid and upright_angle_valid:
+            primary_motion_ok = angle_drop >= min_angle_drop
+        else:
+            primary_motion_ok = hip_drop >= min_hip_drop or aspect_gain >= min_aspect_gain
+
+        # "Final posture is horizontal" check. When angle is a real
+        # measurement, use it directly. When it isn't (angle_valid False -
+        # the 45.0 placeholder), fall back to lying_score, which was
+        # recomputed in model.py without any angle contribution in that
+        # case, so it stays a genuine (if noisier) signal instead of the
+        # fixed placeholder.
+        final_posture_ok = (
+            (angle <= min_lie_angle) if feat_angle_valid else (current >= fast_threshold)
+        )
+
         # Normal/fast path keeps the stricter score, but the two-cue
         # requirement can be bypassed when the score alone is already
         # high-confidence (see fall_high_confidence_score above).
@@ -232,8 +267,8 @@ class CameraWorker(threading.Thread):
             upright_seen
             and transition_score >= fast_threshold
             and current >= fast_threshold
-            and angle <= min_lie_angle
-            and angle_drop >= min_angle_drop
+            and final_posture_ok
+            and primary_motion_ok
             and (cues >= min_cues or transition_score >= high_confidence_score)
         )
 
@@ -264,13 +299,32 @@ class CameraWorker(threading.Thread):
 
         slow_upright_seen = (
             slow_upright_ref["f"]["upright_score"] >= float(self.g.get("prefall_upright_score", 0.55))
-            or slow_upright_ref["f"]["angle"] >= slow_upright_angle
+            or (
+                slow_upright_ref["f"].get("angle_valid", True)
+                and slow_upright_ref["f"]["angle"] >= slow_upright_angle
+            )
         )
-        slow_angle_drop = max(0.0, slow_upright_ref["f"]["angle"] - angle)
+        slow_upright_angle_valid = slow_upright_ref["f"].get("angle_valid", True)
+        if feat_angle_valid and slow_upright_angle_valid:
+            slow_angle_drop = max(0.0, slow_upright_ref["f"]["angle"] - angle)
+        else:
+            slow_angle_drop = 0.0
         slow_geometry_cue = (
             hip_drop >= min_hip_drop
             or aspect_gain >= min_aspect_gain
             or slow_angle_drop >= 10.0
+        )
+        # Same substitution as the fast path: when angle isn't real, don't
+        # let the fabricated 0.0 slow_angle_drop hard-block an otherwise
+        # clear gradual fall. slow_geometry_cue already requires one of the
+        # reliable signals in that case.
+        slow_transition_ok = (
+            (slow_angle_drop >= 10.0)
+            if (feat_angle_valid and slow_upright_angle_valid)
+            else (hip_drop >= min_hip_drop or aspect_gain >= min_aspect_gain)
+        )
+        slow_final_posture_ok = (
+            (angle <= slow_angle_limit) if feat_angle_valid else True
         )
 
         # Do not require the person to be stationary BEFORE creating the
@@ -295,14 +349,15 @@ class CameraWorker(threading.Thread):
         slow_pass = (
             slow_upright_seen
             and transition_score >= slow_threshold
-            and angle <= slow_angle_limit
-            and slow_angle_drop >= 10.0
+            and slow_final_posture_ok
+            and slow_transition_ok
             and slow_geometry_cue
         )
 
         passed = fast_pass or slow_pass
         details = {
             "angle": angle,
+            "angle_valid": feat_angle_valid,
             "angle_drop": angle_drop,
             "angular_velocity": angular_velocity,
             "hip_drop": hip_drop,
@@ -340,7 +395,7 @@ class CameraWorker(threading.Thread):
             transition, transition_score, details = self._fall_transition(history, feat, now)
 
             lying_now = (
-                feat["angle"] <= stable_angle
+                (feat["angle"] <= stable_angle if feat.get("angle_valid", True) else False)
                 or feat["lying_score"] >= stable_lie_threshold
             )
 
@@ -422,14 +477,34 @@ class CameraWorker(threading.Thread):
                             self.fall_candidate_bad_since.pop(tid, None)
                             self.fall_candidate_mode.pop(tid, None)
                 else:
-                    self.fall_stable_since.pop(tid, None)
-                    # Do not cancel immediately on one bad pose frame. Allow
+                    # BUGFIX: this used to pop fall_stable_since immediately
+                    # on any single non-lying frame, contradicting the
+                    # comment below and defeating the whole point of
+                    # fall_candidate_bad_since. On noisy CPU pose estimates
+                    # (low res / low fps), one jittery frame where angle
+                    # ticks a degree above stable_angle was enough to wipe
+                    # out an otherwise-real fall's confirmation progress
+                    # every time, so it could never accumulate the required
+                    # confirmation_seconds. Now: tolerate up to
+                    # lying_grace_seconds of continuous bad frames before
+                    # actually resetting the stable-lie timer.
+                    grace = float(self.g.get("lying_grace_seconds", 0.6))
+                    bad_since = self.fall_candidate_bad_since.setdefault(tid, now)
+                    if now - bad_since >= grace:
+                        self.fall_stable_since.pop(tid, None)
+                        self.fall_candidate_bad_since.pop(tid, None)
+                    # else: still within grace - keep fall_stable_since
+                    # running so a brief pose glitch doesn't restart the
+                    # confirmation countdown from zero.
+
+                    # Do not cancel the *candidate* immediately either. Allow
                     # the slow-fall transition window to complete, but expire
                     # the candidate if the person never reaches a lying
                     # posture. This prevents a normal sit/crouch from staying
                     # armed indefinitely.
                     if now - candidate_since > max_candidate:
                         self.fall_candidate_since.pop(tid, None)
+                        self.fall_stable_since.pop(tid, None)
                         self.fall_candidate_bad_since.pop(tid, None)
                         self.fall_candidate_mode.pop(tid, None)
 
@@ -453,11 +528,12 @@ class CameraWorker(threading.Thread):
                     float(_raw_angle) if _raw_angle is not None else stable_angle
                 )
                 strongly_lying = (
-                    feat["angle"] <= unknown_angle
+                    (feat["angle"] <= unknown_angle if feat.get("angle_valid", True) else False)
                     or feat["lying_score"] >= unknown_lie_threshold
                 )
                 if strongly_lying:
                     since = self.fall_unknown_since.setdefault(tid, now)
+                    self.fall_unknown_bad_since.pop(tid, None)
                     if now - since >= unknown_seconds:
                         LOG.warning(
                             "%s: unknown-onset lying confirmed track=%s lying=%.2f "
@@ -466,12 +542,20 @@ class CameraWorker(threading.Thread):
                         )
                         self.confirm_fall(feat["lying_score"])
                         self.fall_unknown_since.pop(tid, None)
+                        self.fall_unknown_bad_since.pop(tid, None)
                         self.fall_candidate_since.pop(tid, None)
                         self.fall_stable_since.pop(tid, None)
                         self.fall_candidate_bad_since.pop(tid, None)
                         self.fall_candidate_mode.pop(tid, None)
                 else:
-                    self.fall_unknown_since.pop(tid, None)
+                    # Same jitter tolerance as the stable-lie timer above:
+                    # one noisy frame shouldn't reset a multi-second
+                    # accumulation back to zero.
+                    grace = float(self.g.get("lying_grace_seconds", 0.6))
+                    bad_since = self.fall_unknown_bad_since.setdefault(tid, now)
+                    if now - bad_since >= grace:
+                        self.fall_unknown_since.pop(tid, None)
+                        self.fall_unknown_bad_since.pop(tid, None)
 
         for stale in list(self.track_history.keys()):
             if stale not in active_ids:
@@ -481,6 +565,7 @@ class CameraWorker(threading.Thread):
                 self.fall_candidate_bad_since.pop(stale, None)
                 self.fall_candidate_mode.pop(stale, None)
                 self.fall_unknown_since.pop(stale, None)
+                self.fall_unknown_bad_since.pop(stale, None)
 
     # -- alert dispatch --------------------------------------------------
     def confirm_fall(self, score):
