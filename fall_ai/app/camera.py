@@ -217,7 +217,7 @@ class CameraWorker(threading.Thread):
         # falls can miss. The final stable-lie confirmation in process_people()
         # still has to hold for confirmation_seconds before an alert is sent.
         slow_posture_threshold = float(self.g.get("slow_fall_posture_threshold", 0.45))
-        slow_angle_limit = float(self.g.get("slow_fall_angle", 45.0))
+        slow_angle_limit = float(self.g.get("slow_fall_angle", 50.0))
         slow_upright_angle = float(self.g.get("slow_fall_upright_angle", 55.0))
         slow_stationary_seconds = float(self.g.get("slow_fall_stationary_seconds", 2.2))
         slow_stationary_movement = float(self.g.get("slow_fall_stationary_movement", 0.055))
@@ -282,9 +282,9 @@ class CameraWorker(threading.Thread):
     def process_people(self, people):
         now = time.monotonic()
         threshold = float(self.g.get("fall_score_threshold", 0.72))
-        confirm = float(self.g.get("confirmation_seconds", 2.5))
-        stable_lie_threshold = float(self.g.get("stable_lie_threshold", 0.68))
-        stable_angle = float(self.g.get("stable_lie_angle", 42.0))
+        confirm = float(self.g.get("confirmation_seconds", 1.8))
+        stable_lie_threshold = float(self.g.get("stable_lie_threshold", 0.45))
+        stable_angle = float(self.g.get("stable_lie_angle", 48.0))
         cid = self.cam.get("id", "camera")
 
         track_ids = self.tracker.update(people, now)
@@ -315,9 +315,13 @@ class CameraWorker(threading.Thread):
 
             candidate_since = self.fall_candidate_since.get(tid)
             if candidate_since is not None:
+                # v0.4.7 intentionally favors recall over precision. Once a
+                # strong fall transition has been detected, accept a somewhat
+                # imperfect final pose. A single YOLO/keypoint estimate should
+                # not prevent an otherwise obvious fall from being confirmed.
                 lying_now = (
-                    feat["lying_score"] >= stable_lie_threshold
-                    and feat["angle"] <= stable_angle
+                    feat["angle"] <= stable_angle
+                    or feat["lying_score"] >= stable_lie_threshold
                 )
 
                 if lying_now:
@@ -340,7 +344,7 @@ class CameraWorker(threading.Thread):
                     # posture. This prevents a normal sit/crouch from staying
                     # armed indefinitely.
                     max_candidate = float(self.g.get(
-                        "slow_fall_transition_seconds", 6.0
+                        "slow_fall_transition_seconds", 8.0
                     ))
                     if now - candidate_since > max_candidate:
                         self.fall_candidate_since.pop(tid, None)
