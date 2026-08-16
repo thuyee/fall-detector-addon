@@ -250,9 +250,14 @@ class CameraWorker(threading.Thread):
         # the torso crosses ~45 degrees, then confirms that the person remains
         # still. Here that confirmation is represented by the existing
         # stable-lie window in process_people().
+        # IMPORTANT: do not require a high lying_score at the moment the
+        # slow-fall candidate starts.  During a gradual fall the torso can
+        # cross the 45-degree transition point while the bbox/aspect and
+        # keypoint spread still look only partly horizontal.  Requiring
+        # lying_score here was causing slow falls to be rejected before the
+        # confirmation stage ever started.
         slow_pass = (
             slow_upright_seen
-            and current >= slow_posture_threshold
             and angle <= slow_angle_limit
             and slow_angle_drop >= 10.0
             and slow_geometry_cue
