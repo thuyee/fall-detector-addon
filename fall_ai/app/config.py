@@ -29,12 +29,24 @@ DEFAULT_GLOBAL = {
     "fall_min_angular_velocity": 8.0,
     "fall_min_hip_drop": 0.035,
     "fall_min_aspect_gain": 0.25,
+    # Fast-fall cue-count requirement can be bypassed when the composite
+    # score alone is already this confident (recall > precision).
+    "fall_min_cues": 2,
+    "fall_high_confidence_score": 0.85,
     "slow_fall_transition_seconds": 8.0,
     "slow_fall_angle": 50.0,
     "slow_fall_posture_threshold": 0.45,
     "slow_fall_upright_angle": 55.0,
     "slow_fall_stationary_seconds": 2.2,
     "slow_fall_stationary_movement": 0.055,
+    # Fallback: confirm a fall from sustained lying posture alone, even with
+    # no upright reference (track lost/reacquired mid-fall, camera/motion
+    # started with the person already down, etc).
+    "unknown_onset_enabled": True,
+    "unknown_onset_seconds": 10.0,
+    # Leave unset (None) to fall back to stable_lie_threshold/stable_lie_angle.
+    "unknown_onset_lying_threshold": None,
+    "unknown_onset_angle": None,
     "cpu_threads": 2,
     "snapshot_on_event": True,
     "snapshot_retention_days": 7,

@@ -444,11 +444,13 @@ class CameraWorker(threading.Thread):
             # is still worth an alert.
             if bool(self.g.get("unknown_onset_enabled", True)):
                 unknown_seconds = float(self.g.get("unknown_onset_seconds", 10.0))
-                unknown_lie_threshold = float(
-                    self.g.get("unknown_onset_lying_threshold", stable_lie_threshold)
+                _raw_lie = self.g.get("unknown_onset_lying_threshold")
+                unknown_lie_threshold = (
+                    float(_raw_lie) if _raw_lie is not None else stable_lie_threshold
                 )
-                unknown_angle = float(
-                    self.g.get("unknown_onset_angle", stable_angle)
+                _raw_angle = self.g.get("unknown_onset_angle")
+                unknown_angle = (
+                    float(_raw_angle) if _raw_angle is not None else stable_angle
                 )
                 strongly_lying = (
                     feat["angle"] <= unknown_angle

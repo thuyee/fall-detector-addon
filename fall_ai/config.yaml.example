@@ -55,6 +55,8 @@ global:
   unknown_onset_seconds: 10.0
   # unknown_onset_lying_threshold / unknown_onset_angle default to
   # stable_lie_threshold / stable_lie_angle if left unset.
+  # unknown_onset_lying_threshold: 0.45
+  # unknown_onset_angle: 48.0
   cpu_threads: 2
   snapshot_on_event: true
   snapshot_retention_days: 7

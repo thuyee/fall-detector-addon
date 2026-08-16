@@ -1,3 +1,7 @@
+# v0.4.13
+
+- Version bump only (packaging), no functional change from v0.4.12.
+
 # v0.4.12
 
 - **New: unknown-onset lying fallback.** Previously, a fall could only be
