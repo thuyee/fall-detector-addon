@@ -88,6 +88,19 @@ class CameraWorker(threading.Thread):
         self.fall_candidate_since = {}
         self.fall_stable_since = {}
         self.fall_candidate_bad_since = {}
+        # Which path (fast/slow) armed the current candidate. Used to gate
+        # slow-fall confirmation behind an explicit posture + stillness
+        # check (see slow_fall_posture_threshold / slow_fall_stationary_movement).
+        self.fall_candidate_mode = {}
+        # Track continuously-lying duration independent of the transition
+        # candidate above. Covers the case where a track never had an
+        # upright reference to compare against - e.g. the RTSP link
+        # glitched, HA motion flapped, or the person was already occluded
+        # while falling and only reappears as a "new" track once already on
+        # the floor. Without this, such a person could lie on the floor
+        # indefinitely and never generate an alert, because
+        # _fall_transition() requires seeing them upright first.
+        self.fall_unknown_since = {}
         self.last_debug_log = {}
 
     # -- motion gating -----------------------------------------------
@@ -206,14 +219,22 @@ class CameraWorker(threading.Thread):
             + 0.12 * aspect_score
         )
 
-        # Normal/fast path keeps the stricter score and two-cue requirement.
+        min_cues = int(self.g.get("fall_min_cues", 2))
+        # When the composite score is already very high, don't let a single
+        # missing cue (e.g. hip/ankle occluded by furniture) block an
+        # otherwise obvious fast fall. Recall > precision here.
+        high_confidence_score = float(self.g.get("fall_high_confidence_score", 0.85))
+
+        # Normal/fast path keeps the stricter score, but the two-cue
+        # requirement can be bypassed when the score alone is already
+        # high-confidence (see fall_high_confidence_score above).
         fast_pass = (
             upright_seen
             and transition_score >= fast_threshold
             and current >= fast_threshold
             and angle <= min_lie_angle
             and angle_drop >= min_angle_drop
-            and cues >= 2
+            and (cues >= min_cues or transition_score >= high_confidence_score)
         )
 
         # Slow-fall path: mirror the proven fall-streak idea used by the
@@ -263,6 +284,14 @@ class CameraWorker(threading.Thread):
         # keypoint spread still look only partly horizontal.  Requiring
         # lying_score here was causing slow falls to be rejected before the
         # confirmation stage ever started.
+        #
+        # slow_fall_posture_threshold and slow_fall_stationary_movement are
+        # NOT checked here on purpose (same reasoning as above). They are a
+        # hard gate applied later, in process_people(), right before a
+        # slow-fall candidate is actually allowed to confirm_fall(). Keeping
+        # them out of candidate creation preserves early/lenient candidate
+        # arming; enforcing them only at the final confirm step still means
+        # a slow-fall alert can never fire unless both are satisfied.
         slow_pass = (
             slow_upright_seen
             and transition_score >= slow_threshold
@@ -310,12 +339,18 @@ class CameraWorker(threading.Thread):
 
             transition, transition_score, details = self._fall_transition(history, feat, now)
 
+            lying_now = (
+                feat["angle"] <= stable_angle
+                or feat["lying_score"] >= stable_lie_threshold
+            )
+
             if transition:
                 # Keep the candidate alive. In particular, a slow fall can
                 # trigger at ~45 degrees and need several inference frames
                 # before it reaches the final lying posture.
                 self.fall_candidate_since.setdefault(tid, now)
                 self.fall_candidate_bad_since.pop(tid, None)
+                self.fall_candidate_mode[tid] = details.get("mode")
                 LOG.info(
                     "%s: fall transition track=%s mode=%s score=%.2f angle=%.1f drop=%.1f vel=%.1f hip=%.3f cues=%d",
                     cid, tid, details.get("mode", "?"), transition_score, details["angle"], details["angle_drop"],
@@ -328,10 +363,7 @@ class CameraWorker(threading.Thread):
                 # strong fall transition has been detected, accept a somewhat
                 # imperfect final pose. A single YOLO/keypoint estimate should
                 # not prevent an otherwise obvious fall from being confirmed.
-                lying_now = (
-                    feat["angle"] <= stable_angle
-                    or feat["lying_score"] >= stable_lie_threshold
-                )
+                max_candidate = float(self.g.get("slow_fall_transition_seconds", 8.0))
 
                 if lying_now:
                     # Start the actual stable-lying confirmation only when
@@ -341,10 +373,54 @@ class CameraWorker(threading.Thread):
                     self.fall_stable_since.setdefault(tid, now)
                     self.fall_candidate_bad_since.pop(tid, None)
                     if now - self.fall_stable_since[tid] >= confirm:
-                        self.confirm_fall(max(feat["lying_score"], transition_score))
-                        self.fall_candidate_since.pop(tid, None)
-                        self.fall_stable_since.pop(tid, None)
-                        self.fall_candidate_bad_since.pop(tid, None)
+                        # Slow-fall candidates get one extra hard gate here:
+                        # the person must have reached a genuinely horizontal
+                        # posture (not just an ambiguous mid-range score) AND
+                        # be nearly motionless over the last
+                        # slow_fall_stationary_seconds. Either check failing
+                        # means this is NOT reported as a fall yet (e.g. a
+                        # bend/crouch/pick-something-up passing through the
+                        # lying-adjacent posture while still moving). The
+                        # fast path (sudden collapse) is unaffected.
+                        mode = self.fall_candidate_mode.get(tid)
+                        gate_ok = True
+                        if mode == "slow":
+                            slow_posture_threshold = float(
+                                self.g.get("slow_fall_posture_threshold", 0.45)
+                            )
+                            slow_stationary_movement = float(
+                                self.g.get("slow_fall_stationary_movement", 0.055)
+                            )
+                            posture_ok = feat["lying_score"] >= slow_posture_threshold
+                            stationary_ok = details.get(
+                                "slow_movement", 0.0
+                            ) <= slow_stationary_movement
+                            gate_ok = posture_ok and stationary_ok
+                            if not gate_ok:
+                                LOG.info(
+                                    "%s: slow-fall gate not yet met track=%s lying=%.2f "
+                                    "(need>=%.2f) move=%.3f (need<=%.3f)",
+                                    cid, tid, feat["lying_score"], slow_posture_threshold,
+                                    details.get("slow_movement", 0.0), slow_stationary_movement,
+                                )
+
+                        if gate_ok:
+                            self.confirm_fall(max(feat["lying_score"], transition_score))
+                            self.fall_candidate_since.pop(tid, None)
+                            self.fall_stable_since.pop(tid, None)
+                            self.fall_candidate_bad_since.pop(tid, None)
+                            self.fall_candidate_mode.pop(tid, None)
+                            self.fall_unknown_since.pop(tid, None)
+                        elif now - candidate_since > max_candidate:
+                            # Gate never satisfied (person keeps shifting
+                            # slightly, e.g. in pain) - do not stay armed
+                            # forever, but this only affects when we give up
+                            # waiting, never whether the gate itself is
+                            # required.
+                            self.fall_candidate_since.pop(tid, None)
+                            self.fall_stable_since.pop(tid, None)
+                            self.fall_candidate_bad_since.pop(tid, None)
+                            self.fall_candidate_mode.pop(tid, None)
                 else:
                     self.fall_stable_since.pop(tid, None)
                     # Do not cancel immediately on one bad pose frame. Allow
@@ -352,12 +428,48 @@ class CameraWorker(threading.Thread):
                     # the candidate if the person never reaches a lying
                     # posture. This prevents a normal sit/crouch from staying
                     # armed indefinitely.
-                    max_candidate = float(self.g.get(
-                        "slow_fall_transition_seconds", 8.0
-                    ))
                     if now - candidate_since > max_candidate:
                         self.fall_candidate_since.pop(tid, None)
                         self.fall_candidate_bad_since.pop(tid, None)
+                        self.fall_candidate_mode.pop(tid, None)
+
+            # -- unknown-onset lying (no upright reference available) ------
+            # Runs independently of the transition candidate above. Covers:
+            # a track that was lost mid-fall and reappears as a "new" id
+            # while already on the floor, a person who was already down
+            # when the camera/motion gate first picked them up, or any case
+            # where _fall_transition() never found an upright reference.
+            # This intentionally trades some precision for recall: a long,
+            # uninterrupted lying posture with no known prior standing state
+            # is still worth an alert.
+            if bool(self.g.get("unknown_onset_enabled", True)):
+                unknown_seconds = float(self.g.get("unknown_onset_seconds", 10.0))
+                unknown_lie_threshold = float(
+                    self.g.get("unknown_onset_lying_threshold", stable_lie_threshold)
+                )
+                unknown_angle = float(
+                    self.g.get("unknown_onset_angle", stable_angle)
+                )
+                strongly_lying = (
+                    feat["angle"] <= unknown_angle
+                    or feat["lying_score"] >= unknown_lie_threshold
+                )
+                if strongly_lying:
+                    since = self.fall_unknown_since.setdefault(tid, now)
+                    if now - since >= unknown_seconds:
+                        LOG.warning(
+                            "%s: unknown-onset lying confirmed track=%s lying=%.2f "
+                            "angle=%.1f duration=%.1fs (no prior upright reference)",
+                            cid, tid, feat["lying_score"], feat["angle"], now - since,
+                        )
+                        self.confirm_fall(feat["lying_score"])
+                        self.fall_unknown_since.pop(tid, None)
+                        self.fall_candidate_since.pop(tid, None)
+                        self.fall_stable_since.pop(tid, None)
+                        self.fall_candidate_bad_since.pop(tid, None)
+                        self.fall_candidate_mode.pop(tid, None)
+                else:
+                    self.fall_unknown_since.pop(tid, None)
 
         for stale in list(self.track_history.keys()):
             if stale not in active_ids:
@@ -365,6 +477,8 @@ class CameraWorker(threading.Thread):
                 self.fall_candidate_since.pop(stale, None)
                 self.fall_stable_since.pop(stale, None)
                 self.fall_candidate_bad_since.pop(stale, None)
+                self.fall_candidate_mode.pop(stale, None)
+                self.fall_unknown_since.pop(stale, None)
 
     # -- alert dispatch --------------------------------------------------
     def confirm_fall(self, score):

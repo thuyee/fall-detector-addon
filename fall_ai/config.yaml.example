@@ -37,12 +37,24 @@ global:
   fall_min_angular_velocity: 8.0
   fall_min_hip_drop: 0.035
   fall_min_aspect_gain: 0.25
+  # Fast-fall cue count can be bypassed when the composite score alone is
+  # already this confident (recall > precision: don't let one occluded
+  # keypoint block an obvious fall).
+  fall_min_cues: 2
+  fall_high_confidence_score: 0.85
   slow_fall_transition_seconds: 6.0
   slow_fall_angle: 50.0
   slow_fall_posture_threshold: 0.45
   slow_fall_upright_angle: 55.0
   slow_fall_stationary_seconds: 2.2
   slow_fall_stationary_movement: 0.055
+  # Fallback path: confirms a fall from sustained lying posture alone when
+  # no upright reference was ever seen (track lost/reacquired mid-fall,
+  # camera/motion just started with the person already down, etc).
+  unknown_onset_enabled: true
+  unknown_onset_seconds: 10.0
+  # unknown_onset_lying_threshold / unknown_onset_angle default to
+  # stable_lie_threshold / stable_lie_angle if left unset.
   cpu_threads: 2
   snapshot_on_event: true
   snapshot_retention_days: 7

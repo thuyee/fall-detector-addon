@@ -1,3 +1,51 @@
+# v0.4.12
+
+- **New: unknown-onset lying fallback.** Previously, a fall could only be
+  confirmed if the detector had seen the person upright first
+  (`_fall_transition` requires an upright reference). This meant a track
+  that lost identity mid-fall (RTSP glitch, HA motion sensor flapping,
+  occlusion) and reappeared as a "new" track while already on the floor
+  could lie there indefinitely with zero alert. Now, any track showing a
+  sustained strongly-lying posture for `unknown_onset_seconds` (default
+  10s) confirms a fall even with no upright reference at all. Toggle with
+  `unknown_onset_enabled` (default true); tune `unknown_onset_seconds`,
+  `unknown_onset_lying_threshold`, `unknown_onset_angle` per camera if a
+  room legitimately has people lying down on purpose (bed/sofa) and this
+  needs to be less sensitive there.
+- **Fast-fall cue requirement relaxed for high-confidence scores.** Fast
+  falls previously required 2 of 4 dynamic cues (angle drop, angular
+  velocity, hip drop, aspect gain) in addition to the score threshold. A
+  single occluded keypoint (e.g. legs behind furniture) could drop this to
+  1 cue and reject an otherwise obvious fall. Now, `cues >= fall_min_cues`
+  (still 2 by default) OR `transition_score >= fall_high_confidence_score`
+  (0.85 default) passes - an unambiguous score alone is enough.
+- **HA API calls now retry.** `ha_client.fire_event` / `call_service`
+  (used for the `fall_ai_event` event and both mobile-app + Zalo
+  notifications) previously gave up after a single failed request. A
+  one-off network hiccup right when a fall is confirmed meant the alert
+  could silently vanish. Both now retry up to `HAClient.retries` times
+  (default 2, 1s apart) before giving up. `get_state` (motion polling,
+  called every 0.5s) is intentionally left without retry - a miss there
+  self-corrects on the next poll.
+
+# v0.4.11
+
+- `slow_fall_posture_threshold` and `slow_fall_stationary_movement` were read
+  from config but never actually used to gate anything (dead code). Wired
+  them in as a **hard requirement** for the slow-fall path only: a slow-fall
+  candidate can now only `confirm_fall()` once the final posture's
+  `lying_score >= slow_fall_posture_threshold` AND the person's
+  center-of-mass movement over the last `slow_fall_stationary_seconds` is
+  `<= slow_fall_stationary_movement`. If either check fails, it is not
+  reported as a fall (candidate keeps waiting, up to the existing
+  `slow_fall_transition_seconds` cap, then expires).
+  - This gate only applies to candidates armed via the slow-fall path
+    (gradual stand-to-floor transitions). The fast-fall path (sudden
+    collapse) is unaffected.
+  - Candidate *creation* for slow falls is intentionally left as lenient as
+    before (see the v0.4.6/0.4.7 notes below) — only the final confirmation
+    step is gated, so early slow-fall detection is not delayed or rejected.
+
 # v0.4.10
 
 - Mobile notification now defaults to `notify.notify` when no explicit service list is configured.
