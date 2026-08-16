@@ -82,8 +82,12 @@ class CameraWorker(threading.Thread):
         # informative than a single "lying" frame: a real fall normally has
         # standing -> rapid rotation -> low/lying posture.
         self.track_history = {}
+        # Candidate state is kept through short pose/keypoint glitches.
+        # A slow fall may cross the slow-fall transition angle well before
+        # YOLO reports a fully lying posture.
         self.fall_candidate_since = {}
-        self.fall_candidate_samples = {}
+        self.fall_stable_since = {}
+        self.fall_candidate_bad_since = {}
         self.last_debug_log = {}
 
     # -- motion gating -----------------------------------------------
@@ -293,8 +297,11 @@ class CameraWorker(threading.Thread):
             transition, transition_score, details = self._fall_transition(history, feat, now)
 
             if transition:
+                # Keep the candidate alive. In particular, a slow fall can
+                # trigger at ~45 degrees and need several inference frames
+                # before it reaches the final lying posture.
                 self.fall_candidate_since.setdefault(tid, now)
-                self.fall_candidate_samples.setdefault(tid, deque(maxlen=32))
+                self.fall_candidate_bad_since.pop(tid, None)
                 LOG.info(
                     "%s: fall transition track=%s mode=%s score=%.2f angle=%.1f drop=%.1f vel=%.1f hip=%.3f cues=%d",
                     cid, tid, details.get("mode", "?"), transition_score, details["angle"], details["angle_drop"],
@@ -303,47 +310,43 @@ class CameraWorker(threading.Thread):
 
             candidate_since = self.fall_candidate_since.get(tid)
             if candidate_since is not None:
-                # Do not cancel the candidate because of one noisy YOLO pose
-                # frame. At 3 FPS, a single bad keypoint frame is common.
-                # Keep a short confirmation history and require the majority
-                # of observations in the confirmation window to be lying,
-                # while the final observation must still be lying.
                 lying_now = (
                     feat["lying_score"] >= stable_lie_threshold
                     and feat["angle"] <= stable_angle
                 )
-                samples = self.fall_candidate_samples.setdefault(tid, deque(maxlen=32))
-                samples.append((now, lying_now, float(feat["lying_score"]), float(feat["angle"]), float(transition_score)))
 
-                elapsed = now - candidate_since
-                window_samples = [x for x in samples if x[0] >= candidate_since and x[0] <= now]
-
-                if elapsed >= confirm:
-                    min_samples = max(4, int(round(confirm * float(self.g.get("inference_fps", 3)) * 0.55)))
-                    lying_count = sum(1 for x in window_samples if x[1])
-                    lying_ratio = lying_count / max(1, len(window_samples))
-                    final_lying = lying_now
-
-                    if len(window_samples) >= min_samples and final_lying and lying_ratio >= 0.60:
-                        best_score = max(
-                            [x[2] for x in window_samples if x[1]] + [transition_score]
-                        )
-                        self.confirm_fall(best_score)
+                if lying_now:
+                    # Start the actual stable-lying confirmation only when
+                    # the person reaches the final posture. The transition
+                    # candidate may remain alive for the whole slow-fall
+                    # window before this point.
+                    self.fall_stable_since.setdefault(tid, now)
+                    self.fall_candidate_bad_since.pop(tid, None)
+                    if now - self.fall_stable_since[tid] >= confirm:
+                        self.confirm_fall(max(feat["lying_score"], transition_score))
                         self.fall_candidate_since.pop(tid, None)
-                        self.fall_candidate_samples.pop(tid, None)
-                    else:
-                        LOG.info(
-                            "%s: fall candidate rejected track=%s samples=%d lying=%d ratio=%.2f final=%s",
-                            cid, tid, len(window_samples), lying_count, lying_ratio, final_lying,
-                        )
+                        self.fall_stable_since.pop(tid, None)
+                        self.fall_candidate_bad_since.pop(tid, None)
+                else:
+                    self.fall_stable_since.pop(tid, None)
+                    # Do not cancel immediately on one bad pose frame. Allow
+                    # the slow-fall transition window to complete, but expire
+                    # the candidate if the person never reaches a lying
+                    # posture. This prevents a normal sit/crouch from staying
+                    # armed indefinitely.
+                    max_candidate = float(self.g.get(
+                        "slow_fall_transition_seconds", 6.0
+                    ))
+                    if now - candidate_since > max_candidate:
                         self.fall_candidate_since.pop(tid, None)
-                        self.fall_candidate_samples.pop(tid, None)
+                        self.fall_candidate_bad_since.pop(tid, None)
 
         for stale in list(self.track_history.keys()):
             if stale not in active_ids:
                 self.track_history.pop(stale, None)
                 self.fall_candidate_since.pop(stale, None)
-                self.fall_candidate_samples.pop(stale, None)
+                self.fall_stable_since.pop(stale, None)
+                self.fall_candidate_bad_since.pop(stale, None)
 
     # -- alert dispatch --------------------------------------------------
     def confirm_fall(self, score):

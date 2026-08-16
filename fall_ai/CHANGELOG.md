@@ -1,4 +1,4 @@
-## 0.4.4
+## 0.4.5\n- Keep fall candidates alive through gradual upright-to-lying transitions.\n- Stable-lying confirmation starts only after the final lying posture is reached.\n- Tolerate transient pose/keypoint glitches without immediately cancelling the candidate.\n\n## 0.4.3
 - Added a dedicated slow-fall streak path inspired by the supplied V12.5 SmartSense detector.
 - Slow falls no longer depend on high angular velocity or a large instantaneous angle drop.
 - Slow-fall detection uses an upright-to-torso-angle transition around 45 degrees plus a stationary confirmation window.
