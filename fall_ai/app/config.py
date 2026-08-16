@@ -34,6 +34,9 @@ DEFAULT_GLOBAL = {
     "cpu_threads": 2,
     "snapshot_on_event": True,
     "snapshot_retention_days": 7,
+    # Unsafe is cleared automatically after this many seconds.
+    # Set to 0 to disable automatic clearing and use the HA MQTT clear button.
+    "unsafe_auto_clear_seconds": 300,
     "max_people": 2,
     "track_timeout_seconds": 2.0,
     "track_iou_threshold": 0.25,
@@ -47,7 +50,10 @@ DEFAULT_NOTIFICATIONS = {
     "www_subdir": "fall_ai",
     "mobile": {
         "enabled": True,
+        # If services is empty, Fall AI uses notify.notify, matching the
+        # standard Home Assistant action used by the user's automations.
         "services": [],
+        "service": "notify.notify",
         "base_url": "",  # optional full URL override; default uses relative /local/... path
     },
     "zalo": {

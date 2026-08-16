@@ -33,7 +33,7 @@ global:
   fall_min_angular_velocity: 8.0
   fall_min_hip_drop: 0.035
   fall_min_aspect_gain: 0.25
-  slow_fall_transition_seconds: 8.0
+  slow_fall_transition_seconds: 6.0
   slow_fall_angle: 50.0
   slow_fall_posture_threshold: 0.45
   slow_fall_upright_angle: 55.0
@@ -42,6 +42,7 @@ global:
   cpu_threads: 2
   snapshot_on_event: true
   snapshot_retention_days: 7
+  unsafe_auto_clear_seconds: 300
   max_people: 2
   track_timeout_seconds: 2.0
   track_iou_threshold: 0.25
@@ -53,6 +54,7 @@ notifications:
   www_subdir: "fall_ai"
   mobile:
     enabled: true
+    service: notify.notify
     services:
       - notify.mobile_app_dien_thoai_cua_a
     base_url: ""

@@ -369,17 +369,24 @@ class CameraWorker(threading.Thread):
         cam_name = self.cam.get("name", cid)
 
         snapshot_filename = ""
-        if bool(self.g.get("snapshot_on_event", True)) and self.last_frame is not None:
+        # Freeze the exact frame available at the instant FALL CONFIRMED is
+        # entered. Save it before firing HA events or sending notifications,
+        # so network/service latency cannot delay or change the capture.
+        confirm_frame = self.last_frame.copy() if self.last_frame is not None else None
+        if bool(self.g.get("snapshot_on_event", True)) and confirm_frame is not None:
             stamp = time.strftime("%Y%m%d-%H%M%S")
             snapshot_filename = f"{cid}_{stamp}.jpg"
             try:
                 self.snapshot_dir.mkdir(parents=True, exist_ok=True)
-                cv2.imwrite(str(self.snapshot_dir / snapshot_filename), self.last_frame)
+                cv2.imwrite(str(self.snapshot_dir / snapshot_filename), confirm_frame)
             except Exception:
                 LOG.exception("%s: snapshot failed", cid)
                 snapshot_filename = ""
 
-        LOG.warning("%s: FALL CONFIRMED score=%.2f", cid, score)
+        LOG.warning(
+            "%s: FALL CONFIRMED score=%.2f snapshot=%s",
+            cid, score, snapshot_filename or "NONE"
+        )
 
         # 1) HA event, for anyone who wants to build their own automation too.
         self.ha.fire_event("fall_ai_event", {

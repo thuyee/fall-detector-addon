@@ -18,11 +18,13 @@ except ImportError:  # pragma: no cover - optional dependency
 
 
 class MqttPublisher:
-    def __init__(self, cfg, ha_client, cameras):
+    def __init__(self, cfg, ha_client, cameras, global_cfg=None):
         self.cfg = cfg or {}
+        self.global_cfg = global_cfg or {}
         self.ha = ha_client
         self.cameras = cameras
         self.client = None
+        self._fall_since = {}
         self.prefix = self.cfg.get("prefix", "fall_ai")
         self.discovery_prefix = self.cfg.get("discovery_prefix", "homeassistant")
         self._connected = False
@@ -63,11 +65,13 @@ class MqttPublisher:
                 self._connected = True
                 LOG.info("MQTT connected to %s:%s", host, port)
                 self._publish_discovery()
+                self._subscribe_commands()
             else:
                 LOG.error("MQTT connect failed, rc=%s", rc)
 
         self.client.on_connect = on_connect
         try:
+            self.client.on_message = self._on_message
             self.client.connect(host, port, keepalive=60)
             self.client.loop_start()
         except Exception:
@@ -99,9 +103,46 @@ class MqttPublisher:
             self.client.publish(discovery_topic, json.dumps(payload), retain=True)
             self.client.publish(state_topic, "OFF", retain=True)
 
+            # Manual reset button: press it in Home Assistant after confirming
+            # the fall alert was false or the person is safe.
+            button_topic = self._topic(cid, "clear/set")
+            button_config_topic = f"{self.discovery_prefix}/button/{unique_id}_clear/config"
+            button_payload = {
+                "name": f"Clear Fall AI {name}",
+                "unique_id": f"{unique_id}_clear",
+                "command_topic": button_topic,
+                "payload_press": "CLEAR",
+                "device": {
+                    "identifiers": ["fall_ai_addon"],
+                    "name": "Fall AI",
+                    "manufacturer": "Fall AI Addon",
+                },
+            }
+            self.client.publish(button_config_topic, json.dumps(button_payload), retain=True)
+
+    def _subscribe_commands(self):
+        for cam in self.cameras:
+            cid = cam.get("id")
+            if cid:
+                self.client.subscribe(self._topic(cid, "clear/set"))
+
+    def _on_message(self, client, userdata, msg):
+        payload = (msg.payload or b"").decode("utf-8", errors="ignore").strip().upper()
+        if payload != "CLEAR":
+            return
+        prefix = f"{self.prefix}/"
+        topic = msg.topic
+        if not topic.startswith(prefix) or not topic.endswith("/clear/set"):
+            return
+        cam_id = topic[len(prefix):-len("/clear/set")].strip("/")
+        if cam_id:
+            self.publish_clear(cam_id)
+            LOG.warning("Fall state manually cleared: %s", cam_id)
+
     def publish_fall(self, cam_id, snapshot_url=None):
         if not self._connected or not self.client:
             return
+        self._fall_since[cam_id] = time.monotonic()
         self.client.publish(self._topic(cam_id, "fall"), "ON", retain=True)
         if snapshot_url:
             self.client.publish(self._topic(cam_id, "snapshot_url"), snapshot_url, retain=True)
@@ -109,7 +150,20 @@ class MqttPublisher:
     def publish_clear(self, cam_id):
         if not self._connected or not self.client:
             return
+        self._fall_since.pop(cam_id, None)
         self.client.publish(self._topic(cam_id, "fall"), "OFF", retain=True)
+
+    def auto_clear_expired(self):
+        if not self._connected or not self.client:
+            return
+        seconds = float(self.global_cfg.get("unsafe_auto_clear_seconds", 300))
+        if seconds <= 0:
+            return
+        now = time.monotonic()
+        for cam_id, started in list(self._fall_since.items()):
+            if now - started >= seconds:
+                self.publish_clear(cam_id)
+                LOG.info("Fall state auto-cleared after %.0fs: %s", seconds, cam_id)
 
     def stop(self):
         if self.client:

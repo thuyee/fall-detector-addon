@@ -1,3 +1,10 @@
+# v0.4.8
+
+- Mobile notification now defaults to `notify.notify` when no explicit service list is configured.
+- Snapshot is frozen and written immediately when FALL CONFIRMED is entered, before HA/Zalo calls.
+- Added automatic fall-state clear (default 300s) and a Home Assistant MQTT manual-clear button.
+- Manual clear publishes OFF immediately; set `unsafe_auto_clear_seconds: 0` to disable auto-clear.
+
 ## 0.4.7
 - Prioritize fall-detection recall over strict false-positive rejection.
 - Relaxed final lying confirmation to tolerate imperfect YOLO pose/keypoint estimates.

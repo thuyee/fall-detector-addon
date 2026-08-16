@@ -65,7 +65,9 @@ def main():
     if not cfg["cameras"]:
         LOG.warning("No cameras configured. Add cameras to /config/config.yaml.")
         while True:
-            time.sleep(60)
+            time.sleep(5)
+            if mqtt_pub:
+                mqtt_pub.auto_clear_expired()
 
     model = PoseModel(g.get("image_size", 416), g.get("cpu_threads", 2))
 
@@ -93,7 +95,7 @@ def main():
 
     mqtt_pub = None
     if mqtt_cfg.get("enabled", False):
-        mqtt_pub = MqttPublisher(mqtt_cfg, ha, cfg["cameras"])
+        mqtt_pub = MqttPublisher(mqtt_cfg, ha, cfg["cameras"], global_cfg=g)
         mqtt_pub.start()
 
     cleaner = SnapshotCleaner(snapshot_dir, g.get("snapshot_retention_days", 7))
@@ -112,7 +114,9 @@ def main():
 
     try:
         while True:
-            time.sleep(60)
+            time.sleep(5)
+            if mqtt_pub:
+                mqtt_pub.auto_clear_expired()
     except KeyboardInterrupt:
         LOG.info("Shutting down...")
         for w in workers:

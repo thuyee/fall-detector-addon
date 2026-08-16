@@ -68,8 +68,8 @@ class Notifier:
             return
         services = mobile_cfg.get("services") or []
         if not services:
-            LOG.debug("No mobile notify services configured; skipping mobile push")
-            return
+            service = mobile_cfg.get("service") or "notify.notify"
+            services = [service]
 
         base_url = (mobile_cfg.get("base_url") or "").strip()
         if base_url:
