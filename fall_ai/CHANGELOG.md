@@ -1,3 +1,61 @@
+# v0.4.15
+
+Driven by a real field log from the "san" (outdoor yard) camera where a
+strong, real fall (angle crashed 85°→9.6°, `drop=78`, `vel=132`) never
+confirmed. Root-caused with a new simulation harness (`sim/harness.py`,
+13 synthetic scenarios covering both real falls and common non-fall
+motions) that drives the actual `camera.py` pipeline end-to-end instead of
+reasoning about it by hand - kept in the package for future threshold
+tuning.
+
+- **Fixed: slow-fall posture gate assumed a side-on camera.** The
+  `slow_fall_posture_threshold` gate (added in v0.4.11) only checked
+  `lying_score`, which is 65% driven by aspect ratio / keypoint spread -
+  signals that assume a person lying flat reads as a *wide* bounding box.
+  On a steep/overhead-angle camera (outdoor yard cam looking down), a
+  person lying directly below the camera never produces a wide bbox, so
+  `lying_score` stayed at ~0.15-0.20 even after a real fall, permanently
+  blocking confirmation. The gate now also accepts a genuine (`angle_valid`)
+  torso angle at or below `slow_fall_angle` as independently sufficient,
+  since a real measured near-horizontal torso doesn't depend on camera
+  framing the way the aspect-ratio signal does.
+- **Fixed: `slow_movement` used cumulative path length, not actual
+  displacement.** It summed every frame-to-frame position delta over the
+  stationary window, so it grew without bound under ordinary per-frame
+  pose-estimation noise (more pronounced outdoors / at lower resolution)
+  even for a person who never moved - making the stillness gate nearly
+  impossible to satisfy under noisy real-world conditions. Replaced with
+  the bounding-box range (how far the position actually wandered) of the
+  center position over the window, which stays small for genuine noise
+  around one spot and only grows for real sustained movement.
+- **The stillness+posture gate is now applied to the fast-fall path too**,
+  not just slow-fall. Fast-fall previously only required holding
+  `lying_now` continuously for `confirmation_seconds` with no movement
+  check at all, which repetitive floor motion (e.g. sit-ups, where torso
+  angle dips under the lying threshold for a large fraction of every rep)
+  could satisfy by chance. A genuine fast fall is expected to end in real
+  stillness well within this window, so this does not meaningfully delay
+  real detections (verified: still confirms in ~4s in simulation).
+- **The unknown-onset path now also requires stillness** before
+  confirming, for the same reason - it's meant to catch someone genuinely
+  immobile with no known prior standing state, and without a stillness
+  check, sustained repetitive floor motion could eventually satisfy
+  "lying posture held a long time" without the person ever being still.
+  A genuinely incapacitated person is already immobile, so this costs
+  nothing for the real emergencies this path targets. New optional config
+  `unknown_onset_stationary_movement` (defaults to
+  `slow_fall_stationary_movement`).
+- **Known, accepted limitation (not fixed here):** a person who fully
+  reclines flat on a sofa/bed and stays still is kinematically
+  indistinguishable from a real slow fall using 2D pose alone. Given this
+  project's recall-first priority this can (rarely) trigger a false alarm;
+  properly fixing it needs a per-camera "resting zone" mask, tracked as a
+  future enhancement.
+- Simulation results (`sim/harness.py`, run against the actual deployed
+  thresholds `fast_fall_score_threshold=0.52`,
+  `slow_fall_score_threshold=0.30`): 12/13 scenarios now match expectation.
+  The one remaining mismatch is the sofa-nap trade-off above.
+
 # v0.4.14
 
 - **Bugfix: `fall_candidate_bad_since` was dead code — one noisy frame could

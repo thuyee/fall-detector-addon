@@ -1,5 +1,5 @@
 name: Fall AI
-version: "0.4.14"
+version: "0.4.15"
 slug: fall_ai
 description: CPU-efficient YOLO11n pose fall detection with mobile/Zalo alerts for Home Assistant
 arch:
