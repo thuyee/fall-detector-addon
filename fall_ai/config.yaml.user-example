@@ -1,0 +1,20 @@
+# Copy this structure to the persistent /config/config.yaml.
+# IMPORTANT: replace YOUR_PASSWORD with the real camera password.
+#
+# Phòng khách:
+#   RTSP host: 192.168.0.107
+#   Motion: binary_sensor.c6n_e17394610_motion
+#
+# Sân:
+#   RTSP host: 192.168.0.122
+#   Motion: binary_sensor.h6c_bf2378127_motion
+#
+# Notifications:
+#   - Before enabling notifications, add 'homeassistant_config:rw' to this
+#     addon's map: in its own config.yaml (Settings > Add-ons > Fall AI >
+#     Info), otherwise snapshot images cannot reach HA's www/ folder.
+#   - notifications.mobile.services: the notify.* service(s) shown under
+#     Settings -> Devices & services -> Mobile App on the phone(s) you want alerted.
+#   - notifications.zalo: fill in thread_id and account_selection the same
+#     way your existing zalo_bot.send_message automations do (see the
+#     conversation/automation you already have that calls zalo_bot).

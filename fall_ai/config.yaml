@@ -1,0 +1,26 @@
+name: Fall AI
+version: "0.4.15"
+slug: fall_ai
+description: CPU-efficient YOLO11n pose fall detection with mobile/Zalo alerts for Home Assistant
+arch:
+  - amd64
+startup: application
+boot: auto
+init: false
+hassio_api: true
+homeassistant_api: true
+map:
+  - addon_config:rw
+  # Needed so snapshots can be written into HA's own www/ folder, which
+  # makes them reachable at /local/... for mobile-app notifications and
+  # by filesystem path for the zalo_bot integration's send_image action.
+  # This grants the addon read/write access to your entire HA config
+  # directory (including secrets.yaml) — the standard technique used by
+  # many add-ons that need to publish files under www/.
+  - homeassistant_config:rw
+options:
+  log_level: info
+schema:
+  log_level: list(debug|info|warning|error)
+stage: experimental
+panel_icon: mdi:human-falling

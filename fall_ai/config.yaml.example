@@ -1,0 +1,96 @@
+cameras:
+  - id: phong_khach
+    name: "Phòng khách"
+    rtsp: "rtsp://admin:YOUR_PASSWORD@192.168.0.107:554"
+    motion_entity: "binary_sensor.c6n_e17394610_motion"
+    enabled: true
+
+  - id: san
+    name: "Sân"
+    rtsp: "rtsp://admin:YOUR_PASSWORD@192.168.0.122:554"
+    motion_entity: "binary_sensor.h6c_bf2378127_motion"
+    enabled: true
+
+global:
+  inference_fps: 3
+  image_size: 416
+  person_confidence: 0.45
+  motion_threshold: 8.0
+  motion_pixels: 250
+  # Temporal fall detection: a real fall must transition from upright to
+  # lying, not merely be lying in a single frame.
+  confirmation_seconds: 1.8
+  cooldown_seconds: 60
+  fall_score_threshold: 0.72
+  # Score core for fast falls
+  fast_fall_score_threshold: 0.72
+  # Score core for slow falls (lower = more sensitive)
+  slow_fall_score_threshold: 0.30
+  stable_lie_threshold: 0.45
+  stable_lie_angle: 48.0
+  history_seconds: 5.0
+  transition_window_seconds: 4.0
+  prefall_upright_score: 0.55
+  prefall_upright_angle: 55.0
+  fall_lie_angle: 38.0
+  fall_min_angle_drop: 20.0
+  fall_min_angular_velocity: 8.0
+  fall_min_hip_drop: 0.035
+  fall_min_aspect_gain: 0.25
+  # Tolerate this many seconds of a single noisy pose frame before
+  # resetting the stable-lie / unknown-onset confirmation timers.
+  lying_grace_seconds: 0.6
+  # Fast-fall cue count can be bypassed when the composite score alone is
+  # already this confident (recall > precision: don't let one occluded
+  # keypoint block an obvious fall).
+  fall_min_cues: 2
+  fall_high_confidence_score: 0.85
+  slow_fall_transition_seconds: 6.0
+  slow_fall_angle: 50.0
+  slow_fall_posture_threshold: 0.45
+  slow_fall_upright_angle: 55.0
+  slow_fall_stationary_seconds: 2.2
+  slow_fall_stationary_movement: 0.055
+  # Fallback path: confirms a fall from sustained lying posture alone when
+  # no upright reference was ever seen (track lost/reacquired mid-fall,
+  # camera/motion just started with the person already down, etc).
+  unknown_onset_enabled: true
+  unknown_onset_seconds: 10.0
+  # unknown_onset_lying_threshold / unknown_onset_angle default to
+  # stable_lie_threshold / stable_lie_angle if left unset.
+  # unknown_onset_lying_threshold: 0.45
+  # unknown_onset_angle: 48.0
+  # unknown_onset_stationary_movement defaults to slow_fall_stationary_movement.
+  # unknown_onset_stationary_movement: 0.055
+  cpu_threads: 2
+  snapshot_on_event: true
+  snapshot_retention_days: 7
+  unsafe_auto_clear_seconds: 300
+  max_people: 2
+  track_timeout_seconds: 2.0
+  track_iou_threshold: 0.25
+  track_center_threshold: 0.20
+
+notifications:
+  enabled: true
+  message: "⚠️ Phát hiện té ngã tại {camera_name} lúc {time}"
+  www_subdir: "fall_ai"
+  mobile:
+    enabled: true
+    service: notify.notify
+    services:
+      - notify.mobile_app_dien_thoai_cua_a
+    base_url: ""
+  zalo:
+    enabled: false
+    thread_id: ""
+    account_selection: ""
+    msg_type: "1"
+    ttl: 0
+    send_text: true
+    send_image: true
+
+mqtt:
+  enabled: false
+  prefix: fall_ai
+  discovery_prefix: homeassistant
